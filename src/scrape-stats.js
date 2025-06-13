@@ -184,12 +184,6 @@ async function main() {
       await fs.writeFile(htmlPath, result.html);
       console.log(`HTML saved: ${htmlPath}`);
       
-      // Output paths for GitHub Actions
-      if (process.env.GITHUB_ACTIONS) {
-        console.log(`::set-output name=html_${instance.name}::${htmlPath}`);
-        console.log(`::set-output name=screenshot_${instance.name}::${result.screenshot}`);
-      }
-      
     } catch (error) {
       console.error(`Failed to process ${instance.name}:`, error.message);
       // Continue with next instance rather than failing entirely
