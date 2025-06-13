@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+instances.json
+
+# Project planning files (keep private)
+PRD.md
+TASKS.md
+CLAUDE.md
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test coverage
+coverage/
+.nyc_output
+
+# Local test data
+test-data/
+screenshots/
+*.html
+*.png
+stats-*.html
+screenshot-*.png
+
+# Temporary files
+tmp/
+temp/

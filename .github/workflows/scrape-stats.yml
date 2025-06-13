@@ -1,0 +1,55 @@
+name: ServiceNow Stats Scraper
+
+on:
+  schedule:
+    # Run every 45 minutes
+    - cron: '*/45 * * * *'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  scrape-stats:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Create output directory
+      run: mkdir -p stats-output
+
+    - name: Scrape all instances
+      env:
+        SERVICENOW_INSTANCES_JSON: ${{ secrets.SERVICENOW_INSTANCES_JSON }}
+      run: |
+        cd stats-output
+        node ../src/scrape-stats.js
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: servicenow-stats-${{ github.run_number }}-${{ github.run_attempt }}
+        path: stats-output/
+        retention-days: 7
+        if-no-files-found: warn
+
+    - name: Summary
+      if: always()
+      run: |
+        echo "## ServiceNow Stats Collection Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Run Time:** $(date -u)" >> $GITHUB_STEP_SUMMARY
+        echo "**Workflow Run:** #${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Files Generated:" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        ls -la stats-output/ || echo "No files generated" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,24 @@
+{
+  "name": "sn-pdi-monitor",
+  "version": "1.0.0",
+  "description": "ServiceNow Performance Diagnostics Information (PDI) monitoring using GitHub Actions and Puppeteer",
+  "main": "src/scrape-stats.js",
+  "scripts": {
+    "test": "node src/scrape-stats.js",
+    "test:local": "node -r dotenv/config src/scrape-stats.js"
+  },
+  "keywords": [
+    "servicenow",
+    "monitoring",
+    "puppeteer",
+    "github-actions"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "puppeteer": "^23.11.0"
+  },
+  "devDependencies": {
+    "dotenv": "^16.4.7"
+  }
+}

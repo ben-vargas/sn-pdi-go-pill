@@ -1,0 +1,22 @@
+{
+  "instances": [
+    {
+      "name": "production",
+      "url": "https://yourcompany.service-now.com",
+      "username": "your-username",
+      "password": "your-password"
+    },
+    {
+      "name": "development",
+      "url": "https://yourcompanydev.service-now.com",
+      "username": "your-username",
+      "password": "your-password"
+    },
+    {
+      "name": "test",
+      "url": "https://yourcompanytest.service-now.com",
+      "username": "your-username",
+      "password": "your-password"
+    }
+  ]
+}

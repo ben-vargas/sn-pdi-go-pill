@@ -1,0 +1,208 @@
+const puppeteer = require('puppeteer');
+const fs = require('fs').promises;
+const path = require('path');
+
+class ServiceNowScraper {
+  constructor(instanceUrl, username, password) {
+    this.instanceUrl = instanceUrl.replace(/\/$/, ''); // Remove trailing slash
+    this.username = username;
+    this.password = password;
+    this.browser = null;
+    this.page = null;
+  }
+
+  async init() {
+    console.log(`Initializing browser for ${this.instanceUrl}...`);
+    this.browser = await puppeteer.launch({
+      headless: 'new',
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu'
+      ]
+    });
+    this.page = await this.browser.newPage();
+    
+    // Set a reasonable viewport
+    await this.page.setViewport({ width: 1280, height: 800 });
+    
+    // Set longer timeout for slow instances
+    await this.page.setDefaultTimeout(60000);
+  }
+
+  async login() {
+    console.log('Navigating to login page...');
+    const loginUrl = `${this.instanceUrl}/login.do`;
+    
+    try {
+      await this.page.goto(loginUrl, { waitUntil: 'networkidle2' });
+      
+      // Check if already logged in by looking for common ServiceNow elements
+      const isLoggedIn = await this.page.evaluate(() => {
+        return document.querySelector('#gsft_main') !== null || 
+               document.querySelector('.navpage-main') !== null;
+      });
+      
+      if (isLoggedIn) {
+        console.log('Already logged in');
+        return true;
+      }
+      
+      console.log('Filling login form...');
+      
+      // Wait for and fill username
+      await this.page.waitForSelector('#user_name', { visible: true });
+      await this.page.type('#user_name', this.username);
+      
+      // Fill password
+      await this.page.waitForSelector('#user_password', { visible: true });
+      await this.page.type('#user_password', this.password);
+      
+      // Click login button
+      await this.page.click('#sysverb_login');
+      
+      // Wait for navigation after login
+      await this.page.waitForNavigation({ waitUntil: 'networkidle2' });
+      
+      // Verify login success
+      const loginSuccess = await this.page.evaluate(() => {
+        return window.location.pathname !== '/login.do' && 
+               window.location.pathname !== '/login_redirect.do';
+      });
+      
+      if (!loginSuccess) {
+        throw new Error('Login failed - still on login page');
+      }
+      
+      console.log('Login successful');
+      return true;
+      
+    } catch (error) {
+      console.error('Login error:', error.message);
+      throw error;
+    }
+  }
+
+  async scrapeStats() {
+    console.log('Navigating to stats page...');
+    const statsUrl = `${this.instanceUrl}/stats.do`;
+    
+    try {
+      await this.page.goto(statsUrl, { waitUntil: 'networkidle2' });
+      
+      // Wait for stats content to load
+      await this.page.waitForSelector('body', { visible: true });
+      
+      // Get the HTML content
+      const htmlContent = await this.page.content();
+      
+      // Take a screenshot for verification
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const instanceName = new URL(this.instanceUrl).hostname.split('.')[0];
+      
+      const screenshotPath = `screenshot-${instanceName}-${timestamp}.png`;
+      await this.page.screenshot({ path: screenshotPath, fullPage: true });
+      console.log(`Screenshot saved: ${screenshotPath}`);
+      
+      return {
+        html: htmlContent,
+        screenshot: screenshotPath,
+        timestamp: timestamp,
+        instance: instanceName
+      };
+      
+    } catch (error) {
+      console.error('Stats scraping error:', error.message);
+      throw error;
+    }
+  }
+
+  async close() {
+    if (this.browser) {
+      await this.browser.close();
+    }
+  }
+}
+
+async function main() {
+  let instances = [];
+  
+  // Check if we have a JSON configuration
+  if (!process.env.SERVICENOW_INSTANCES_JSON) {
+    console.error('No ServiceNow instances configured.');
+    console.error('Please set SERVICENOW_INSTANCES_JSON environment variable with a JSON configuration.');
+    console.error('Example:');
+    console.error('{"instances":[{"name":"prod","url":"https://prod.service-now.com","username":"user","password":"pass"}]}');
+    process.exit(1);
+  }
+  
+  try {
+    // Parse JSON configuration from environment variable
+    const config = JSON.parse(process.env.SERVICENOW_INSTANCES_JSON);
+    instances = config.instances || [];
+    
+    if (!Array.isArray(instances) || instances.length === 0) {
+      throw new Error('Configuration must contain an "instances" array with at least one instance');
+    }
+    
+    // Validate each instance has required fields
+    instances.forEach((instance, index) => {
+      if (!instance.url || !instance.username || !instance.password) {
+        throw new Error(`Instance at index ${index} missing required fields (url, username, password)`);
+      }
+      // Add a name if not provided
+      if (!instance.name) {
+        instance.name = `instance-${index + 1}`;
+      }
+    });
+  } catch (error) {
+    console.error('Failed to parse SERVICENOW_INSTANCES_JSON:', error.message);
+    console.error('Please ensure the JSON is valid and follows the required format.');
+    process.exit(1);
+  }
+  
+  console.log(`Configured to process ${instances.length} instance(s)`);
+  
+  // Process each instance sequentially
+  for (const instance of instances) {
+    console.log(`\n=== Processing ${instance.name} instance ===`);
+    
+    const scraper = new ServiceNowScraper(
+      instance.url,
+      instance.username,
+      instance.password
+    );
+    
+    try {
+      await scraper.init();
+      await scraper.login();
+      const result = await scraper.scrapeStats();
+      
+      // Save HTML content
+      const htmlPath = `stats-${result.instance}-${result.timestamp}.html`;
+      await fs.writeFile(htmlPath, result.html);
+      console.log(`HTML saved: ${htmlPath}`);
+      
+      // Output paths for GitHub Actions
+      if (process.env.GITHUB_ACTIONS) {
+        console.log(`::set-output name=html_${instance.name}::${htmlPath}`);
+        console.log(`::set-output name=screenshot_${instance.name}::${result.screenshot}`);
+      }
+      
+    } catch (error) {
+      console.error(`Failed to process ${instance.name}:`, error.message);
+      // Continue with next instance rather than failing entirely
+    } finally {
+      await scraper.close();
+    }
+  }
+  
+  console.log('\n=== All instances processed ===');
+}
+
+// Run the main function
+main().catch(error => {
+  console.error('Fatal error:', error);
+  process.exit(1);
+});
