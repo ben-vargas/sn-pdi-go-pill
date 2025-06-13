@@ -1,7 +1,7 @@
 {
   "name": "sn-pdi-monitor",
   "version": "1.0.0",
-  "description": "ServiceNow Performance Diagnostics Information (PDI) monitoring using GitHub Actions and Puppeteer",
+  "description": "ServiceNow Personal Developer Instance (PDI) monitoring using GitHub Actions and Puppeteer",
   "main": "src/scrape-stats.js",
   "scripts": {
     "test": "node src/scrape-stats.js",

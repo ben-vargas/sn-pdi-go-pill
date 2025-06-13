@@ -1,4 +1,4 @@
-# ServiceNow PDI (Performance Diagnostics Information) Monitor
+# ServiceNow PDI (Personal Developer Instance) Monitor
 
 A GitHub Actions-based solution for automatically monitoring ServiceNow `/stats.do` pages across multiple instances. This tool runs on a schedule, logs into ServiceNow instances, captures the stats page HTML, and stores it as GitHub Actions artifacts.
 
