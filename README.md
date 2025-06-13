@@ -1,17 +1,49 @@
 # ServiceNow PDI (Personal Developer Instance) Monitor
 
-A GitHub Actions-based solution for automatically monitoring ServiceNow `/stats.do` pages across multiple instances. This tool runs on a schedule, logs into ServiceNow instances, captures the stats page HTML, and stores it as GitHub Actions artifacts.
+A GitHub Actions-based solution for automatically monitoring ServiceNow PDI instances and keeping developer accounts active. This tool provides two main functions:
+
+1. **PDI Stats Monitor** - Monitors `/stats.do` pages across multiple instances every 30 minutes
+2. **Developer Account Keepalive** - Logs into developer.servicenow.com accounts every 6 hours to prevent instance hibernation
 
 ## Features
 
+### PDI Stats Monitor
 - ✅ **Unlimited Instance Support** - Monitor any number of ServiceNow instances
+- ✅ **Scheduled Execution** - Runs every 30 minutes (configurable)
+- ✅ **Data Storage** - Stores HTML snapshots as GitHub Actions artifacts
+
+### Developer Account Keepalive
+- ✅ **Multiple Account Support** - Keep multiple developer accounts active
+- ✅ **2FA Support** - Handles TOTP-based two-factor authentication (Google Authenticator compatible)
+- ✅ **Scheduled Execution** - Runs every 6 hours (configurable)
+- ✅ **Automatic Instance Wake-up** - Navigates to instances page to trigger PDI activation
+- ✅ **Smart Login Flow** - Handles ServiceNow SSO two-step authentication
+- ✅ **Debug Mode Available** - Full debugging version with detailed logging and screenshots
+
+### Both Workflows
 - ✅ **Flexible Configuration** - JSON-based configuration for easy management
-- ✅ **Scheduled Execution** - Runs every 45 minutes (configurable)
 - ✅ **Secure Credential Management** - Uses GitHub Secrets for authentication
-- ✅ **Data Storage** - Stores HTML snapshots as GitHub Actions artifacts (7-day retention)
-- ✅ **Screenshots** - Captures visual snapshots for verification
 - ✅ **No Infrastructure Required** - Runs entirely on GitHub Actions
 - ✅ **Sequential Processing** - Simple, reliable execution
+
+## Project Structure
+
+```
+sn-pdi-go-pill/
+├── .github/workflows/
+│   ├── scrape-stats.yml          # PDI stats monitor (runs every 30 min)
+│   └── developer-keepalive.yml   # Developer login (runs every 6 hours)
+├── src/
+│   ├── scrape-stats.js           # PDI stats scraper
+│   ├── developer-login.js        # Production developer login script
+│   ├── developer-login-debug.js  # Debug version with full logging
+│   └── totp-handler.js           # TOTP 2FA code generator
+├── instances.json.example        # Template for PDI instances
+├── accounts.json.example         # Template for developer accounts
+├── package.json                  # Node.js dependencies
+├── .env.example                  # Environment variables template
+└── README.md                     # This file
+```
 
 ## Quick Start
 
@@ -22,7 +54,9 @@ git clone https://github.com/ben-vargas/sn-pdi-go-pill.git
 cd sn-pdi-go-pill
 ```
 
-### 2. Configure Your Instances
+### 2. Configure Your Environments
+
+#### For PDI Stats Monitoring
 
 Create a JSON configuration with your ServiceNow instances:
 
@@ -45,13 +79,39 @@ Create a JSON configuration with your ServiceNow instances:
 }
 ```
 
+#### For Developer Account Keepalive
+
+Create a JSON configuration with your developer accounts:
+
+```json
+[
+  {
+    "name": "dev-account-1",
+    "email": "developer1@example.com",
+    "password": "password",
+    "totpSecret": "YOUR-TOTP-SECRET-IF-2FA-ENABLED"
+  },
+  {
+    "name": "dev-account-2",
+    "email": "developer2@example.com",
+    "password": "password",
+    "totpSecret": ""
+  }
+]
+```
+
 ### 3. Add to GitHub Secrets
 
 1. Go to your repository's Settings → Secrets and variables → Actions
-2. Click "New repository secret"
-3. Name: `SERVICENOW_INSTANCES_JSON`
-4. Value: Paste your entire JSON configuration
-5. Click "Add secret"
+2. Add the following secrets:
+
+   **For PDI Monitoring:**
+   - Name: `SERVICENOW_INSTANCES_JSON`
+   - Value: Your instances JSON configuration
+
+   **For Developer Keepalive:**
+   - Name: `DEVELOPER_ACCOUNTS_JSON`
+   - Value: Your developer accounts JSON configuration
 
 ### 4. Enable GitHub Actions
 
@@ -59,10 +119,17 @@ Go to the Actions tab in your repository and enable workflows.
 
 ### 5. Run Manually or Wait for Schedule
 
+**PDI Stats Monitor:**
 - **Manual Run**: Go to Actions → ServiceNow Stats Scraper → Run workflow
-- **Scheduled**: Automatically runs every 45 minutes
+- **Scheduled**: Automatically runs every 30 minutes
+
+**Developer Account Keepalive:**
+- **Manual Run**: Go to Actions → Developer Account Keepalive → Run workflow  
+- **Scheduled**: Automatically runs every 6 hours
 
 ## Configuration
+
+### PDI Stats Monitor Configuration
 
 Store your ServiceNow instances configuration in the `SERVICENOW_INSTANCES_JSON` secret:
 
@@ -99,13 +166,67 @@ You can add as many instances as needed. Each instance must have:
 
 **⚠️ Privacy Warning**: The `name` field will be visible in public GitHub Actions logs. Use generic names instead of revealing instance names (e.g., "prod-1" instead of "company-prod").
 
+### Developer Account Configuration
+
+Store your developer accounts configuration in the `DEVELOPER_ACCOUNTS_JSON` secret:
+
+```json
+[
+  {
+    "name": "dev-account-1",
+    "email": "developer1@example.com",
+    "password": "your-password",
+    "totpSecret": "YOUR-TOTP-SECRET-HERE"
+  },
+  {
+    "name": "dev-account-2",
+    "email": "developer2@example.com",
+    "password": "your-password",
+    "totpSecret": ""
+  }
+]
+```
+
+Each account must have:
+- `email`: The email address for the developer account
+- `password`: The password for authentication
+- `name` (optional): A friendly name for the account
+- `totpSecret` (optional): The TOTP secret for 2FA (if enabled)
+
+#### Getting Your TOTP Secret
+
+If your account has 2FA enabled:
+1. During 2FA setup, you'll see a QR code and a text secret
+2. Save the text secret (usually looks like: `JBSWY3DPEHPK3PXP`)
+3. Add it to the `totpSecret` field
+
+#### How Developer Keepalive Works
+
+The developer keepalive workflow:
+1. Logs into ServiceNow SSO at `https://signon.service-now.com`
+2. Handles the two-step login (email first, then password)
+3. Manages 2FA authentication:
+   - Detects when 2FA is required
+   - Automatically selects "Authenticator App" option
+   - Generates and enters the 6-digit TOTP code
+4. Navigates to `https://developers.servicenow.com/dev/instances`
+5. This navigation triggers ServiceNow to wake up any sleeping PDI instances
+
 ## Viewing Collected Data
 
+### PDI Stats Monitor
 1. Go to the Actions tab in your repository
-2. Click on a completed workflow run
+2. Click on a completed "ServiceNow Stats Scraper" workflow run
 3. Scroll down to "Artifacts"
 4. Download the `servicenow-stats-{number}` artifact
 5. Extract to view HTML files and screenshots
+
+### Developer Account Keepalive
+1. Go to the Actions tab in your repository
+2. Click on a completed "Developer Account Keepalive" workflow run
+3. Scroll down to "Artifacts"
+4. Download the `developer-keepalive-{number}` artifact
+5. Extract to view screenshots of the login process
 
 ## Local Development
 
@@ -120,7 +241,9 @@ You can add as many instances as needed. Each instance must have:
 npm install
 ```
 
-2. Create your instances configuration:
+2. Create your configurations:
+
+**For PDI Stats Monitor:**
 ```bash
 # Copy the example file
 cp instances.json.example instances.json
@@ -128,7 +251,17 @@ cp instances.json.example instances.json
 nano instances.json  # or use your preferred editor
 ```
 
-3. Test your configuration:
+**For Developer Account Keepalive:**
+```bash
+# Copy the example file
+cp accounts.json.example accounts.json
+# Edit with your developer accounts
+nano accounts.json  # or use your preferred editor
+```
+
+3. Test your configurations:
+
+**PDI Stats Monitor:**
 ```bash
 # Set the environment variable
 export SERVICENOW_INSTANCES_JSON=$(cat instances.json)
@@ -136,37 +269,50 @@ export SERVICENOW_INSTANCES_JSON=$(cat instances.json)
 npm run test
 ```
 
-The scraper will:
-- Process each instance sequentially
-- Save HTML files as `stats-{instance-name}-{timestamp}.html`
-- Save screenshots as `screenshot-{instance-name}-{timestamp}.png`
-- Continue processing even if one instance fails
+**Developer Account Keepalive:**
+```bash
+# Set the environment variable
+export DEVELOPER_ACCOUNTS_JSON=$(cat accounts.json)
+# Run the developer login
+node src/developer-login.js
+```
 
 ### Alternative: Using .env file
 
 For repeated local testing:
 ```bash
 cp .env.example .env
-# Add your JSON to .env file
+# Add your JSON configurations to .env file
 # Then run with dotenv:
-npm run test:local
+npm run test:local      # For PDI stats monitor
+npm run test:developer  # For developer keepalive
+npm run test:developer:debug  # For developer keepalive with full debugging
 ```
 
 ## Changing the Schedule
 
+### PDI Stats Monitor
 Edit `.github/workflows/scrape-stats.yml`:
-
 ```yaml
 on:
   schedule:
-    - cron: '*/45 * * * *'  # Change this cron expression
+    - cron: '*/30 * * * *'  # Change this cron expression
+```
+
+### Developer Account Keepalive
+Edit `.github/workflows/developer-keepalive.yml`:
+```yaml
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Change this cron expression
 ```
 
 Common schedules:
 - Every hour: `0 * * * *`
 - Every 30 minutes: `*/30 * * * *`
-- Daily at 2 AM: `0 2 * * *`
+- Every 2 hours: `0 */2 * * *`
 - Every 6 hours: `0 */6 * * *`
+- Daily at 2 AM: `0 2 * * *`
 
 ## Security Considerations
 
@@ -179,6 +325,16 @@ Common schedules:
 - ⚠️ Workflow run times and status are publicly visible
 
 ## Troubleshooting
+
+### Developer Login Issues
+If the developer login is failing:
+1. Use the debug version locally: `npm run test:developer:debug`
+2. Check the screenshots generated at each step
+3. The debug version includes:
+   - All input field details on each page
+   - Screenshots at every major step
+   - Detailed logging of 2FA code entry
+   - Error screenshots when failures occur
 
 ### Login Failures
 - Verify credentials in GitHub Secrets
@@ -292,17 +448,17 @@ Before adding to GitHub Secrets:
 
 ## Limitations
 
-- No support for 2FA authentication (see Future Enhancements)
-- Sequential processing (one instance at a time)
+- Sequential processing (one instance/account at a time)
 - 7-day retention for collected data
 - No built-in alerting (relies on GitHub's email notifications)
+- Developer keepalive requires TOTP secret for 2FA (SMS/email 2FA not supported)
 
 ## Future Enhancements
 
 The following features were considered but simplified for the initial implementation:
 
-1. **2FA Support** - Could be added using TOTP libraries
-2. **Parallel Execution** - Matrix strategy for concurrent instance processing
+1. **SMS/Email 2FA Support** - Currently only TOTP (authenticator app) is supported
+2. **Parallel Execution** - Matrix strategy for concurrent instance/account processing
 3. **Extended Retention** - External storage integration for longer data retention
 4. **Advanced Notifications** - Slack, PagerDuty, or custom webhook integrations
 5. **Data Analysis** - Parse and analyze stats.do content

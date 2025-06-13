@@ -1,0 +1,20 @@
+[
+  {
+    "name": "dev-account-1",
+    "email": "developer1@example.com",
+    "password": "your-password-here",
+    "totpSecret": "YOUR-TOTP-SECRET-IF-2FA-ENABLED"
+  },
+  {
+    "name": "dev-account-2",
+    "email": "developer2@example.com",
+    "password": "your-password-here",
+    "totpSecret": ""
+  },
+  {
+    "name": "dev-account-3",
+    "email": "developer3@example.com",
+    "password": "your-password-here",
+    "totpSecret": ""
+  }
+]

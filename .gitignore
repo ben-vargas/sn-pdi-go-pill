@@ -6,6 +6,7 @@ node_modules/
 .env.local
 .env.*.local
 instances.json
+accounts.json
 
 # Project planning files (keep private)
 PRD.md
@@ -45,6 +46,7 @@ screenshots/
 *.png
 stats-*.html
 screenshot-*.png
+developer-*.png
 
 # Temporary files
 tmp/

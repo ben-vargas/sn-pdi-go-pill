@@ -1,13 +1,13 @@
-name: ServiceNow Stats Scraper
+name: Developer Account Keepalive
 
 on:
   schedule:
-    # Run every 30 minutes
-    - cron: '*/30 * * * *'
+    # Run every 6 hours
+    - cron: '0 */6 * * *'
   workflow_dispatch: # Allow manual trigger
 
 jobs:
-  scrape-stats:
+  keepalive:
     runs-on: ubuntu-latest
     
     steps:
@@ -24,32 +24,33 @@ jobs:
       run: npm ci
 
     - name: Create output directory
-      run: mkdir -p stats-output
+      run: mkdir -p developer-output
 
-    - name: Scrape all instances
+    - name: Login to developer accounts
       env:
-        SERVICENOW_INSTANCES_JSON: ${{ secrets.SERVICENOW_INSTANCES_JSON }}
+        DEVELOPER_ACCOUNTS_JSON: ${{ secrets.DEVELOPER_ACCOUNTS_JSON }}
+        SKIP_SCREENSHOTS: 'true'
       run: |
-        cd stats-output
-        node ../src/scrape-stats.js
+        cd developer-output
+        node ../src/developer-login.js
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: servicenow-stats-${{ github.run_number }}-${{ github.run_attempt }}
-        path: stats-output/
+        name: developer-keepalive-${{ github.run_number }}-${{ github.run_attempt }}
+        path: developer-output/
         retention-days: 7
         if-no-files-found: warn
 
     - name: Summary
       if: always()
       run: |
-        echo "## ServiceNow Stats Collection Summary" >> $GITHUB_STEP_SUMMARY
+        echo "## Developer Account Keepalive Summary" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**Run Time:** $(date -u)" >> $GITHUB_STEP_SUMMARY
         echo "**Workflow Run:** #${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### Files Generated:" >> $GITHUB_STEP_SUMMARY
+        echo "### Screenshots Generated:" >> $GITHUB_STEP_SUMMARY
         echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-        ls -la stats-output/ || echo "No files generated" >> $GITHUB_STEP_SUMMARY
+        ls -la developer-output/ || echo "No files generated" >> $GITHUB_STEP_SUMMARY
         echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

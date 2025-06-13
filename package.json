@@ -1,17 +1,22 @@
 {
   "name": "sn-pdi-monitor",
-  "version": "1.0.0",
-  "description": "ServiceNow Personal Developer Instance (PDI) monitoring using GitHub Actions and Puppeteer",
+  "version": "1.1.0",
+  "description": "ServiceNow PDI monitoring and developer account keepalive using GitHub Actions and Puppeteer",
   "main": "src/scrape-stats.js",
   "scripts": {
     "test": "node src/scrape-stats.js",
-    "test:local": "node -r dotenv/config src/scrape-stats.js"
+    "test:local": "node -r dotenv/config src/scrape-stats.js",
+    "test:developer": "node -r dotenv/config src/developer-login.js",
+    "test:developer:debug": "node -r dotenv/config src/developer-login-debug.js"
   },
   "keywords": [
     "servicenow",
     "monitoring",
     "puppeteer",
-    "github-actions"
+    "github-actions",
+    "2fa",
+    "totp",
+    "keepalive"
   ],
   "author": "",
   "license": "MIT",
