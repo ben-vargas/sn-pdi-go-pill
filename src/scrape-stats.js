@@ -3,16 +3,17 @@ const fs = require('fs').promises;
 const path = require('path');
 
 class ServiceNowScraper {
-  constructor(instanceUrl, username, password) {
+  constructor(instanceUrl, username, password, instanceName) {
     this.instanceUrl = instanceUrl.replace(/\/$/, ''); // Remove trailing slash
     this.username = username;
     this.password = password;
+    this.instanceName = instanceName;
     this.browser = null;
     this.page = null;
   }
 
   async init() {
-    console.log(`Initializing browser for ${this.instanceUrl}...`);
+    console.log(`Initializing browser...`);
     this.browser = await puppeteer.launch({
       headless: 'new',
       args: [
@@ -99,9 +100,8 @@ class ServiceNowScraper {
       
       // Take a screenshot for verification
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const instanceName = new URL(this.instanceUrl).hostname.split('.')[0];
       
-      const screenshotPath = `screenshot-${instanceName}-${timestamp}.png`;
+      const screenshotPath = `screenshot-${this.instanceName}-${timestamp}.png`;
       await this.page.screenshot({ path: screenshotPath, fullPage: true });
       console.log(`Screenshot saved: ${screenshotPath}`);
       
@@ -109,7 +109,7 @@ class ServiceNowScraper {
         html: htmlContent,
         screenshot: screenshotPath,
         timestamp: timestamp,
-        instance: instanceName
+        instanceName: this.instanceName
       };
       
     } catch (error) {
@@ -171,7 +171,8 @@ async function main() {
     const scraper = new ServiceNowScraper(
       instance.url,
       instance.username,
-      instance.password
+      instance.password,
+      instance.name
     );
     
     try {
@@ -179,8 +180,8 @@ async function main() {
       await scraper.login();
       const result = await scraper.scrapeStats();
       
-      // Save HTML content
-      const htmlPath = `stats-${result.instance}-${result.timestamp}.html`;
+      // Save HTML content with instance name for organization
+      const htmlPath = `stats-${instance.name}-${result.timestamp}.html`;
       await fs.writeFile(htmlPath, result.html);
       console.log(`HTML saved: ${htmlPath}`);
       
