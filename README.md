@@ -18,8 +18,8 @@ A GitHub Actions-based solution for automatically monitoring ServiceNow `/stats.
 ### 1. Fork/Clone this Repository
 
 ```bash
-git clone https://github.com/yourusername/sn-pdi-monitor.git
-cd sn-pdi-monitor
+git clone https://github.com/ben-vargas/sn-pdi-go-pill.git
+cd sn-pdi-go-pill
 ```
 
 ### 2. Configure Your Instances
@@ -97,6 +97,8 @@ You can add as many instances as needed. Each instance must have:
 - `password`: The password for authentication
 - `name` (optional): A friendly name for the instance (defaults to `instance-1`, `instance-2`, etc.)
 
+**⚠️ Privacy Warning**: The `name` field will be visible in public GitHub Actions logs. Use generic names instead of revealing instance names (e.g., "prod-1" instead of "company-prod").
+
 ## Viewing Collected Data
 
 1. Go to the Actions tab in your repository
@@ -113,29 +115,41 @@ You can add as many instances as needed. Each instance must have:
 
 ### Setup
 
-1. Install dependencies:
+1. Install dependencies (REQUIRED - do this first!):
 ```bash
 npm install
 ```
 
-2. Create a `.env` file (see `.env.example`):
+2. Create your instances configuration:
+```bash
+# Copy the example file
+cp instances.json.example instances.json
+# Edit with your actual ServiceNow instances
+nano instances.json  # or use your preferred editor
+```
+
+3. Test your configuration:
+```bash
+# Set the environment variable
+export SERVICENOW_INSTANCES_JSON=$(cat instances.json)
+# Run the scraper
+npm run test
+```
+
+The scraper will:
+- Process each instance sequentially
+- Save HTML files as `stats-{instance-name}-{timestamp}.html`
+- Save screenshots as `screenshot-{instance-name}-{timestamp}.png`
+- Continue processing even if one instance fails
+
+### Alternative: Using .env file
+
+For repeated local testing:
 ```bash
 cp .env.example .env
-# Edit .env with your configuration
-```
-
-3. Run locally:
-```bash
+# Add your JSON to .env file
+# Then run with dotenv:
 npm run test:local
-```
-
-### Local Testing with JSON Config
-
-Create a local `instances.json` file and set the environment variable:
-
-```bash
-export SERVICENOW_INSTANCES_JSON=$(cat instances.json)
-npm run test
 ```
 
 ## Changing the Schedule
@@ -158,9 +172,11 @@ Common schedules:
 
 - ✅ All credentials are stored as encrypted GitHub Secrets
 - ✅ No sensitive data is committed to the repository
-- ✅ Workflow logs do not expose passwords
-- ✅ HTML artifacts are only accessible to repository members
-- ✅ Public repository visitors cannot see your workflow runs or artifacts
+- ✅ Workflow logs do not expose passwords or URLs
+- ✅ ServiceNow instance URLs are hidden from logs (as of latest version)
+- ✅ HTML artifacts require authentication to download
+- ⚠️ Instance names (from your config) ARE visible in public logs
+- ⚠️ Workflow run times and status are publicly visible
 
 ## Troubleshooting
 
@@ -188,6 +204,91 @@ Common schedules:
 ## Adding or Removing Instances
 
 Simply update your `SERVICENOW_INSTANCES_JSON` secret with the new configuration. No code changes required!
+
+## Frequently Asked Questions (FAQ)
+
+### What information is visible in public GitHub Actions logs?
+
+In public repositories, anyone can see:
+- When your workflows run
+- Instance names from your configuration (the `name` field)
+- Success/failure status
+- Console output (but NOT secrets)
+
+They CANNOT see:
+- Your ServiceNow URLs (hidden as of latest version)
+- Usernames or passwords (masked by GitHub)
+- Downloaded artifacts (requires authentication)
+
+### How do I test the configuration locally before pushing?
+
+```bash
+# Create instances.json with your configuration
+# Set the environment variable
+export SERVICENOW_INSTANCES_JSON=$(cat instances.json)
+# Run the test
+npm run test
+```
+
+### Do scheduled workflows start automatically?
+
+Yes! Once the workflow file is pushed to your default branch (main), the schedule activates automatically. The first run will occur at the next scheduled time (e.g., if you push at 1:20 and schedule is */45, it will run at 1:45).
+
+### What happens if my repository is inactive for 60 days?
+
+GitHub disables scheduled workflows after 60 days of no repository activity. You'll receive an email warning before this happens. To keep it active:
+- Make any commit, open an issue, or create a release
+- Or simply re-enable workflows in the Actions tab when needed
+
+Note: Scheduled workflow runs do NOT count as activity.
+
+### Should I use Repository Secrets or Environment Secrets?
+
+Use Repository Secrets (recommended for this project):
+- Simpler setup
+- Available to all workflows
+- Perfect for single-workflow projects
+
+Environment Secrets are only needed if:
+- You want deployment approvals
+- You need environment-specific configurations
+- You have multiple workflows with different access needs
+
+### How do I delete old workflow runs?
+
+1. Go to the Actions tab
+2. Click on a workflow run
+3. Click the "..." menu
+4. Select "Delete workflow run"
+
+This permanently removes logs and artifacts.
+
+### Can I make my repository private later?
+
+Yes! Making the repository private will:
+- Hide all Actions logs from public view
+- Require authentication to see anything
+- Give you 2,000 free Actions minutes/month
+- Not affect your existing setup
+
+### What if the export command gives me an error?
+
+If you get an error with:
+```bash
+export SERVICENOW_INSTANCES_JSON=$(cat instances.json)
+```
+
+Try:
+1. Ensure instances.json exists in your current directory
+2. Check the JSON syntax is valid
+3. On Windows, use different syntax or run in Git Bash
+
+### How can I verify my JSON configuration?
+
+Before adding to GitHub Secrets:
+1. Validate JSON syntax at [jsonlint.com](https://jsonlint.com)
+2. Test locally with the export command
+3. Ensure all instances have required fields: `url`, `username`, `password`
 
 ## Limitations
 
