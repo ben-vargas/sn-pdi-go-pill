@@ -11,6 +11,19 @@ class ServiceNowScraper {
     this.browser = null;
     this.page = null;
   }
+  
+  // Sanitize error messages to remove URLs
+  sanitizeError(error) {
+    let message = error.message || error.toString();
+    // Replace any URL that might appear in error messages
+    message = message.replace(/https?:\/\/[^\s]+/gi, '[INSTANCE_URL]');
+    // Also replace any domain names that might appear
+    if (this.instanceUrl) {
+      const domain = this.instanceUrl.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+      message = message.replace(new RegExp(domain, 'gi'), '[INSTANCE]');
+    }
+    return message;
+  }
 
   async init() {
     console.log(`Initializing browser...`);
@@ -80,7 +93,7 @@ class ServiceNowScraper {
       return true;
       
     } catch (error) {
-      console.error('Login error:', error.message);
+      console.error('Login error:', this.sanitizeError(error));
       throw error;
     }
   }
@@ -113,7 +126,7 @@ class ServiceNowScraper {
       };
       
     } catch (error) {
-      console.error('Stats scraping error:', error.message);
+      console.error('Stats scraping error:', this.sanitizeError(error));
       throw error;
     }
   }
@@ -164,6 +177,14 @@ async function main() {
   
   console.log(`Configured to process ${instances.length} instance(s)`);
   
+  // Track success and failures
+  const results = {
+    total: instances.length,
+    successful: 0,
+    failed: 0,
+    failures: []
+  };
+  
   // Process each instance sequentially
   for (const instance of instances) {
     console.log(`\n=== Processing ${instance.name} instance ===`);
@@ -185,8 +206,16 @@ async function main() {
       await fs.writeFile(htmlPath, result.html);
       console.log(`HTML saved: ${htmlPath}`);
       
+      results.successful++;
+      
     } catch (error) {
-      console.error(`Failed to process ${instance.name}:`, error.message);
+      const sanitizedError = scraper.sanitizeError(error);
+      console.error(`Failed to process ${instance.name}:`, sanitizedError);
+      results.failed++;
+      results.failures.push({
+        instance: instance.name,
+        error: sanitizedError
+      });
       // Continue with next instance rather than failing entirely
     } finally {
       await scraper.close();
@@ -194,6 +223,31 @@ async function main() {
   }
   
   console.log('\n=== All instances processed ===');
+  console.log(`Success: ${results.successful}/${results.total}`);
+  console.log(`Failed: ${results.failed}/${results.total}`);
+  
+  // Write summary file for GitHub Actions
+  const summary = {
+    timestamp: new Date().toISOString(),
+    total: results.total,
+    successful: results.successful,
+    failed: results.failed,
+    failures: results.failures
+  };
+  
+  await fs.writeFile('stats-summary.json', JSON.stringify(summary, null, 2));
+  
+  // Exit with error code if all instances failed
+  if (results.failed === results.total && results.total > 0) {
+    console.error('\nERROR: All instances failed!');
+    process.exit(1);
+  }
+  
+  // Exit with warning code if more than 50% failed
+  if (results.failed > results.successful && results.total > 0) {
+    console.error(`\nWARNING: More than half of instances failed (${results.failed}/${results.total})`);
+    process.exit(2);
+  }
 }
 
 // Run the main function

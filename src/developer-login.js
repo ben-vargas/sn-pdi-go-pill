@@ -11,6 +11,20 @@ class DeveloperAccountLogin {
     this.browser = null;
     this.page = null;
   }
+  
+  // Sanitize error messages to remove URLs and sensitive info
+  sanitizeError(error) {
+    let message = error.message || error.toString();
+    // Replace any URL that might appear in error messages
+    message = message.replace(/https?:\/\/[^\s]+/gi, '[URL]');
+    // Remove email addresses
+    message = message.replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '[EMAIL]');
+    // Remove any service-now.com domains
+    message = message.replace(/[a-zA-Z0-9.-]*\.service-now\.com/gi, '[SERVICENOW]');
+    message = message.replace(/signon\.service-now\.com/gi, '[SSO]');
+    message = message.replace(/developer\.servicenow\.com/gi, '[DEVELOPER_PORTAL]');
+    return message;
+  }
 
   async init() {
     console.log(`[${this.name}] Initializing browser...`);
@@ -221,7 +235,7 @@ class DeveloperAccountLogin {
       return true;
       
     } catch (error) {
-      console.error(`[${this.name}] Login error:`, error.message);
+      console.error(`[${this.name}] Login error:`, this.sanitizeError(error));
       throw error;
     }
   }
@@ -323,7 +337,7 @@ class DeveloperAccountLogin {
       
       // Generate TOTP code
       const totpCode = generateTOTP(this.totpSecret);
-      console.log(`[${this.name}] Generated TOTP code: ${totpCode}`);
+      console.log(`[${this.name}] Generating TOTP code for 2FA...`);
       
       // Check if we're on email verification page instead of TOTP
       const isEmailVerification = await this.page.evaluate(() => {
@@ -512,7 +526,7 @@ class DeveloperAccountLogin {
       console.log(`[${this.name}] 2FA completed`);
       
     } catch (error) {
-      console.error(`[${this.name}] 2FA error:`, error.message);
+      console.error(`[${this.name}] 2FA error:`, this.sanitizeError(error));
       throw error;
     }
   }
@@ -558,7 +572,7 @@ class DeveloperAccountLogin {
       return true;
       
     } catch (error) {
-      console.error(`[${this.name}] Navigation error:`, error.message);
+      console.error(`[${this.name}] Navigation error:`, this.sanitizeError(error));
       throw error;
     }
   }
@@ -578,7 +592,7 @@ class DeveloperAccountLogin {
         fullPage: true 
       });
     } catch (error) {
-      console.error(`[${this.name}] Screenshot error:`, error.message);
+      console.error(`[${this.name}] Screenshot error:`, this.sanitizeError(error));
     }
   }
 
@@ -626,6 +640,14 @@ async function main() {
   
   console.log(`Configured to process ${accounts.length} developer account(s)`);
   
+  // Track success and failures
+  const results = {
+    total: accounts.length,
+    successful: 0,
+    failed: 0,
+    failures: []
+  };
+  
   // Process each account
   for (const account of accounts) {
     console.log(`\n=== Processing ${account.name} ===`);
@@ -638,9 +660,16 @@ async function main() {
       await login.navigateToInstances();
       
       console.log(`[${account.name}] Keepalive completed successfully`);
+      results.successful++;
       
     } catch (error) {
-      console.error(`[${account.name}] Failed:`, error.message);
+      const sanitizedError = login.sanitizeError(error);
+      console.error(`[${account.name}] Failed:`, sanitizedError);
+      results.failed++;
+      results.failures.push({
+        account: account.name,
+        error: sanitizedError
+      });
       // Continue with next account
     } finally {
       await login.close();
@@ -648,6 +677,31 @@ async function main() {
   }
   
   console.log('\n=== All accounts processed ===');
+  console.log(`Success: ${results.successful}/${results.total}`);
+  console.log(`Failed: ${results.failed}/${results.total}`);
+  
+  // Write summary file for GitHub Actions
+  const summary = {
+    timestamp: new Date().toISOString(),
+    total: results.total,
+    successful: results.successful,
+    failed: results.failed,
+    failures: results.failures
+  };
+  
+  await fs.writeFile('developer-summary.json', JSON.stringify(summary, null, 2));
+  
+  // Exit with error code if all accounts failed
+  if (results.failed === results.total && results.total > 0) {
+    console.error('\nERROR: All accounts failed!');
+    process.exit(1);
+  }
+  
+  // Exit with warning code if more than 50% failed
+  if (results.failed > results.successful && results.total > 0) {
+    console.error(`\nWARNING: More than half of accounts failed (${results.failed}/${results.total})`);
+    process.exit(2);
+  }
 }
 
 // Run the main function

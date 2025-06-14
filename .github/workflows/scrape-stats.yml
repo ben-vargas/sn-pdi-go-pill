@@ -49,6 +49,27 @@ jobs:
         echo "**Run Time:** $(date -u)" >> $GITHUB_STEP_SUMMARY
         echo "**Workflow Run:** #${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # Parse and display results if summary file exists
+        if [ -f "stats-output/stats-summary.json" ]; then
+          TOTAL=$(jq -r '.total' stats-output/stats-summary.json)
+          SUCCESS=$(jq -r '.successful' stats-output/stats-summary.json)
+          FAILED=$(jq -r '.failed' stats-output/stats-summary.json)
+          
+          echo "### Results:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Total Instances:** $TOTAL" >> $GITHUB_STEP_SUMMARY
+          echo "- **✅ Successful:** $SUCCESS" >> $GITHUB_STEP_SUMMARY
+          echo "- **❌ Failed:** $FAILED" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Show failures if any
+          if [ "$FAILED" -gt 0 ]; then
+            echo "### ⚠️ Failed Instances:" >> $GITHUB_STEP_SUMMARY
+            jq -r '.failures[] | "- **\(.instance)**: \(.error)"' stats-output/stats-summary.json >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+        fi
+        
         echo "### Files Generated:" >> $GITHUB_STEP_SUMMARY
         echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
         ls -la stats-output/ || echo "No files generated" >> $GITHUB_STEP_SUMMARY
