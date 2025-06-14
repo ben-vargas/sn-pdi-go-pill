@@ -50,6 +50,27 @@ jobs:
         echo "**Run Time:** $(date -u)" >> $GITHUB_STEP_SUMMARY
         echo "**Workflow Run:** #${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # Parse and display results if summary file exists
+        if [ -f "developer-output/developer-summary.json" ]; then
+          TOTAL=$(jq -r '.total' developer-output/developer-summary.json)
+          SUCCESS=$(jq -r '.successful' developer-output/developer-summary.json)
+          FAILED=$(jq -r '.failed' developer-output/developer-summary.json)
+          
+          echo "### Results:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Total Accounts:** $TOTAL" >> $GITHUB_STEP_SUMMARY
+          echo "- **✅ Successful:** $SUCCESS" >> $GITHUB_STEP_SUMMARY
+          echo "- **❌ Failed:** $FAILED" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Show failures if any
+          if [ "$FAILED" -gt 0 ]; then
+            echo "### ⚠️ Failed Accounts:" >> $GITHUB_STEP_SUMMARY
+            jq -r '.failures[] | "- **\(.account)**: \(.error)"' developer-output/developer-summary.json >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+        fi
+        
         echo "### Screenshots Generated:" >> $GITHUB_STEP_SUMMARY
         echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
         ls -la developer-output/ || echo "No files generated" >> $GITHUB_STEP_SUMMARY
