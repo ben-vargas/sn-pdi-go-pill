@@ -176,41 +176,104 @@ class DeveloperAccountLogin {
       
       // Check if we're on the SSO apps page
       await new Promise(resolve => setTimeout(resolve, 2000));
-      const isOnSSOPage = await this.page.evaluate(() => {
+      const afterLoginUrl = await this.page.url();
+      
+      // Check if we're on the SSO apps selection page
+      const isOnSSOAppsPage = await this.page.evaluate(() => {
         return window.location.hostname === 'signon.service-now.com' && 
                document.body && 
                document.body.innerText && 
                document.body.innerText.includes('My Apps');
       });
       
-      if (isOnSSOPage) {
-        console.log(`[${this.name}] On SSO apps page, clicking Developer Program...`);
+      if (isOnSSOAppsPage) {
+        console.log(`[${this.name}] On SSO apps page, looking for Developer Program link...`);
+        
+        // Take a screenshot to debug what's on the page
+        try {
+          await this.takeScreenshot('sso-apps-page');
+        } catch (e) {
+          // Ignore screenshot errors
+        }
         
         // Click on Developer Program (previously Developer Portal)
         try {
-          // Find and click the Developer Program link/button
-          const portalClicked = await this.page.evaluate(() => {
-            const elements = Array.from(document.querySelectorAll('a, div, button, span'));
-            const portalElement = elements.find(el => 
-              el.innerText?.includes('Developer Program') || el.innerText?.includes('Developer Portal')
-            );
+          // Try multiple strategies to find and click the Developer Program link
+          const clicked = await this.page.evaluate(() => {
+            // Strategy 1: Look for exact text match
+            const elements = Array.from(document.querySelectorAll('a, div, button, span, h1, h2, h3, h4, p'));
+            const portalElement = elements.find(el => {
+              const text = el.innerText || el.textContent || '';
+              return text.includes('Developer Program') || text.includes('Developer Portal');
+            });
             
             if (portalElement) {
-              portalElement.click();
+              // Try to find a clickable parent if the element itself isn't clickable
+              let clickTarget = portalElement;
+              let parent = portalElement.parentElement;
+              while (parent && parent !== document.body) {
+                if (parent.tagName === 'A' || parent.tagName === 'BUTTON' || parent.onclick) {
+                  clickTarget = parent;
+                  break;
+                }
+                parent = parent.parentElement;
+              }
+              clickTarget.click();
               return true;
             }
+            
+            // Strategy 2: Look for any link containing developer.servicenow.com
+            const devLinks = Array.from(document.querySelectorAll('a[href*="developer.servicenow.com"], a[href*="developers.servicenow.com"]'));
+            if (devLinks.length > 0) {
+              devLinks[0].click();
+              return true;
+            }
+            
             return false;
           });
           
-          if (!portalClicked) {
-            throw new Error('Could not find Developer Program link');
+          if (!clicked) {
+            console.log(`[${this.name}] Could not find Developer Program link, attempting direct navigation...`);
+            // If we can't find the link, try navigating directly
+            await this.page.goto('https://developers.servicenow.com/dev/', { 
+              waitUntil: 'networkidle2',
+              timeout: 30000 
+            });
+          } else {
+            // Wait a bit for potential navigation
+            await Promise.race([
+              this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }),
+              new Promise(resolve => setTimeout(resolve, 3000))
+            ]);
           }
           
-          // Wait for navigation to developers portal
-          await this.page.waitForNavigation({ waitUntil: 'networkidle2' });
+          // Check if we need to handle a new tab/window
+          const pages = await this.browser.pages();
+          if (pages.length > 1) {
+            console.log(`[${this.name}] New tab detected, switching to it...`);
+            // Get the newest page that isn't the current one
+            const newPage = pages.find(p => p !== this.page);
+            if (newPage) {
+              await this.page.close();
+              this.page = newPage;
+            }
+          }
         } catch (error) {
-          console.error(`[${this.name}] Failed to find Developer Program link`);
-          throw error;
+          console.error(`[${this.name}] Error handling SSO apps page:`, this.sanitizeError(error));
+          // Don't throw here, try to continue
+        }
+      } else if (afterLoginUrl.includes('signon.service-now.com/sso')) {
+        // We're on the SSO page but not the apps selection page
+        // This happens when there's only one app or auto-redirect is enabled
+        console.log(`[${this.name}] On SSO page, attempting direct navigation to developer portal...`);
+        
+        try {
+          await this.page.goto('https://developers.servicenow.com/dev/', { 
+            waitUntil: 'networkidle2',
+            timeout: 30000 
+          });
+        } catch (error) {
+          console.error(`[${this.name}] Direct navigation error:`, this.sanitizeError(error));
         }
       }
       
