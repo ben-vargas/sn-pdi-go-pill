@@ -184,15 +184,15 @@ class DeveloperAccountLogin {
       });
       
       if (isOnSSOPage) {
-        console.log(`[${this.name}] On SSO apps page, clicking Developer Portal...`);
+        console.log(`[${this.name}] On SSO apps page, clicking Developer Program...`);
         
-        // Click on Developer Portal
+        // Click on Developer Program (previously Developer Portal)
         try {
-          // Find and click the Developer Portal link/button
+          // Find and click the Developer Program link/button
           const portalClicked = await this.page.evaluate(() => {
             const elements = Array.from(document.querySelectorAll('a, div, button, span'));
             const portalElement = elements.find(el => 
-              el.innerText?.includes('Developer Portal')
+              el.innerText?.includes('Developer Program') || el.innerText?.includes('Developer Portal')
             );
             
             if (portalElement) {
@@ -203,13 +203,13 @@ class DeveloperAccountLogin {
           });
           
           if (!portalClicked) {
-            throw new Error('Could not find Developer Portal link');
+            throw new Error('Could not find Developer Program link');
           }
           
           // Wait for navigation to developers portal
           await this.page.waitForNavigation({ waitUntil: 'networkidle2' });
         } catch (error) {
-          console.error(`[${this.name}] Failed to find Developer Portal link`);
+          console.error(`[${this.name}] Failed to find Developer Program link`);
           throw error;
         }
       }
