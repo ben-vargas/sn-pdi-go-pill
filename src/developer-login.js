@@ -76,7 +76,8 @@ class DeveloperAccountLogin {
       
       // Check if already logged in (redirected to developers portal)
       const isLoggedIn = await this.page.evaluate(() => {
-        return window.location.hostname === 'developers.servicenow.com' || 
+        return window.location.hostname === 'developer.servicenow.com' || 
+               window.location.hostname === 'developers.servicenow.com' || 
                (window.location.pathname.includes('/dev/') && 
                 !window.location.pathname.includes('/login'));
       });
@@ -222,7 +223,7 @@ class DeveloperAccountLogin {
               return true;
             }
             
-            // Strategy 2: Look for any link containing developer.servicenow.com
+            // Strategy 2: Look for any link containing developer.servicenow.com or developers.servicenow.com
             const devLinks = Array.from(document.querySelectorAll('a[href*="developer.servicenow.com"], a[href*="developers.servicenow.com"]'));
             if (devLinks.length > 0) {
               devLinks[0].click();
@@ -235,7 +236,7 @@ class DeveloperAccountLogin {
           if (!clicked) {
             console.log(`[${this.name}] Could not find Developer Program link, attempting direct navigation...`);
             // If we can't find the link, try navigating directly
-            await this.page.goto('https://developers.servicenow.com/dev/', { 
+            await this.page.goto('https://developer.servicenow.com/dev/', { 
               waitUntil: 'networkidle2',
               timeout: 30000 
             });
@@ -254,6 +255,30 @@ class DeveloperAccountLogin {
             // Get the newest page that isn't the current one
             const newPage = pages.find(p => p !== this.page);
             if (newPage) {
+              // Wait for the new page to load before closing the old one
+              await newPage.bringToFront();
+              
+              // Wait for navigation or timeout after 5 seconds
+              try {
+                await newPage.waitForNavigation({ 
+                  waitUntil: 'networkidle2', 
+                  timeout: 5000 
+                });
+              } catch (e) {
+                // If navigation doesn't happen, check if we need to navigate manually
+                const newPageUrl = await newPage.url();
+                console.log(`[${this.name}] New tab URL: ${newPageUrl}`);
+                
+                if (newPageUrl === 'about:blank' || (!newPageUrl.includes('developer.servicenow.com') && !newPageUrl.includes('developers.servicenow.com'))) {
+                  console.log(`[${this.name}] New tab didn't navigate, manually navigating to developer portal...`);
+                  await newPage.goto('https://developer.servicenow.com/dev/', { 
+                    waitUntil: 'networkidle2',
+                    timeout: 30000 
+                  });
+                }
+              }
+              
+              // Now close the old page and switch
               await this.page.close();
               this.page = newPage;
             }
@@ -268,7 +293,7 @@ class DeveloperAccountLogin {
         console.log(`[${this.name}] On SSO page, attempting direct navigation to developer portal...`);
         
         try {
-          await this.page.goto('https://developers.servicenow.com/dev/', { 
+          await this.page.goto('https://developer.servicenow.com/dev/', { 
             waitUntil: 'networkidle2',
             timeout: 30000 
           });
@@ -281,8 +306,18 @@ class DeveloperAccountLogin {
       const finalUrl = await this.page.url();
       console.log(`[${this.name}] Current URL after login: ${finalUrl}`);
       
+      // If we ended up on about:blank, try to navigate directly
+      if (finalUrl === 'about:blank' || finalUrl === '') {
+        console.log(`[${this.name}] Blank page detected, navigating directly to developer portal...`);
+        await this.page.goto('https://developer.servicenow.com/dev/', { 
+          waitUntil: 'networkidle2',
+          timeout: 30000 
+        });
+      }
+      
       const loginSuccess = await this.page.evaluate(() => {
-        return window.location.hostname === 'developers.servicenow.com' ||
+        return window.location.hostname === 'developer.servicenow.com' ||
+               window.location.hostname === 'developers.servicenow.com' ||
                (window.location.hostname === 'signon.service-now.com' && 
                 document.body && 
                 document.body.innerText && 
@@ -291,6 +326,7 @@ class DeveloperAccountLogin {
       
       if (!loginSuccess) {
         console.log(`[${this.name}] Not on expected page after login. Current URL: ${finalUrl}`);
+        // Don't throw error here, let navigateToInstances handle the navigation
       }
       
       console.log(`[${this.name}] Login successful`);
@@ -598,9 +634,24 @@ class DeveloperAccountLogin {
     console.log(`[${this.name}] Navigating to instances page...`);
     
     try {
-      // Navigate to instances page
-      await this.page.goto('https://developers.servicenow.com/dev/instances', { 
-        waitUntil: 'networkidle2' 
+      // First check if we're already on the developer portal
+      const currentUrl = await this.page.url();
+      console.log(`[${this.name}] Current URL before navigation: ${currentUrl}`);
+      
+      // If we're not on the developer portal, navigate there first
+      if (!currentUrl.includes('developer.servicenow.com') && !currentUrl.includes('developers.servicenow.com')) {
+        console.log(`[${this.name}] Not on developer portal, navigating there first...`);
+        await this.page.goto('https://developer.servicenow.com/dev/', { 
+          waitUntil: 'networkidle2',
+          timeout: 30000
+        });
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+      
+      // Now navigate to instances page
+      await this.page.goto('https://developer.servicenow.com/dev/instances', { 
+        waitUntil: 'networkidle2',
+        timeout: 30000
       });
       
       // Wait for page to load

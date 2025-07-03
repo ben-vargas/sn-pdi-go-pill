@@ -11,6 +11,20 @@ class DeveloperAccountLogin {
     this.browser = null;
     this.page = null;
   }
+  
+  // Sanitize error messages to remove URLs and sensitive info
+  sanitizeError(error) {
+    let message = error.message || error.toString();
+    // Replace any URL that might appear in error messages
+    message = message.replace(/https?:\/\/[^\s]+/gi, '[URL]');
+    // Remove email addresses
+    message = message.replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '[EMAIL]');
+    // Remove any service-now.com domains
+    message = message.replace(/[a-zA-Z0-9.-]*\.service-now\.com/gi, '[SERVICENOW]');
+    message = message.replace(/signon\.service-now\.com/gi, '[SSO]');
+    message = message.replace(/developer\.servicenow\.com/gi, '[DEVELOPER_PORTAL]');
+    return message;
+  }
 
   async init() {
     console.log(`[${this.name}] Initializing browser...`);
@@ -57,12 +71,8 @@ class DeveloperAccountLogin {
         await new Promise(resolve => setTimeout(resolve, 5000));
       }
       
-      // Take screenshot after loading
-      await this.takeScreenshot('01-after-loading');
-      
-      // Log current URL for debugging
+      // Log current URL
       const currentUrl = await this.page.url();
-      console.log(`[${this.name}] Current URL: ${currentUrl}`);
       
       // Check if already logged in (redirected to developers portal)
       const isLoggedIn = await this.page.evaluate(() => {
@@ -77,22 +87,6 @@ class DeveloperAccountLogin {
       }
       
       // Step 1: Fill email and click Next
-      console.log(`[${this.name}] Looking for email input field...`);
-      
-      // Debug: Log all input fields on the page
-      const inputInfo = await this.page.evaluate(() => {
-        const inputs = Array.from(document.querySelectorAll('input'));
-        return inputs.map(input => ({
-          type: input.type,
-          name: input.name,
-          id: input.id,
-          placeholder: input.placeholder,
-          className: input.className,
-          visible: input.offsetParent !== null
-        }));
-      });
-      console.log(`[${this.name}] Found ${inputInfo.length} input fields:`, inputInfo);
-      
       // Try multiple selectors for the email/username field
       const emailSelectors = [
         'input#username',  // The actual ID we found
@@ -151,8 +145,6 @@ class DeveloperAccountLogin {
       await this.page.waitForSelector('input[type="password"], input[name="password"], input[id="password"]', { visible: true });
       await this.page.type('input[type="password"], input[name="password"], input[id="password"]', this.password);
       
-      // Take screenshot before final submit
-      await this.takeScreenshot('02-credentials-filled');
       
       // Submit login form
       console.log(`[${this.name}] Clicking Sign In...`);
@@ -182,50 +174,149 @@ class DeveloperAccountLogin {
       // Check for 2FA
       await this.handle2FA();
       
+      // Take a screenshot to see where we are after 2FA
+      await this.takeScreenshot('08-after-2fa-complete');
+      
       // Check if we're on the SSO apps page
       await new Promise(resolve => setTimeout(resolve, 2000));
-      const isOnSSOPage = await this.page.evaluate(() => {
+      const afterLoginUrl = await this.page.url();
+      console.log(`[${this.name}] URL after 2FA handling: ${afterLoginUrl}`);
+      
+      // Check if we're on the SSO apps selection page
+      const isOnSSOAppsPage = await this.page.evaluate(() => {
         return window.location.hostname === 'signon.service-now.com' && 
                document.body && 
                document.body.innerText && 
                document.body.innerText.includes('My Apps');
       });
       
-      if (isOnSSOPage) {
-        console.log(`[${this.name}] On SSO apps page, clicking Developer Portal...`);
-        await this.takeScreenshot('03-sso-apps-page');
+      if (isOnSSOAppsPage) {
+        console.log(`[${this.name}] On SSO apps page, looking for Developer Program link...`);
         
-        // Click on Developer Portal
+        // Take a screenshot to debug what's on the page
         try {
-          // Find and click the Developer Portal link/button
-          const portalClicked = await this.page.evaluate(() => {
-            const elements = Array.from(document.querySelectorAll('a, div, button, span'));
-            const portalElement = elements.find(el => 
-              el.innerText?.includes('Developer Portal')
-            );
+          await this.takeScreenshot('sso-apps-page');
+        } catch (e) {
+          // Ignore screenshot errors
+        }
+        
+        // Click on Developer Program (previously Developer Portal)
+        try {
+          // Try multiple strategies to find and click the Developer Program link
+          const clicked = await this.page.evaluate(() => {
+            // Strategy 1: Look for exact text match
+            const elements = Array.from(document.querySelectorAll('a, div, button, span, h1, h2, h3, h4, p'));
+            const portalElement = elements.find(el => {
+              const text = el.innerText || el.textContent || '';
+              return text.includes('Developer Program') || text.includes('Developer Portal');
+            });
             
             if (portalElement) {
-              portalElement.click();
+              // Try to find a clickable parent if the element itself isn't clickable
+              let clickTarget = portalElement;
+              let parent = portalElement.parentElement;
+              while (parent && parent !== document.body) {
+                if (parent.tagName === 'A' || parent.tagName === 'BUTTON' || parent.onclick) {
+                  clickTarget = parent;
+                  break;
+                }
+                parent = parent.parentElement;
+              }
+              clickTarget.click();
               return true;
             }
+            
+            // Strategy 2: Look for any link containing developer.servicenow.com
+            const devLinks = Array.from(document.querySelectorAll('a[href*="developer.servicenow.com"], a[href*="developers.servicenow.com"]'));
+            if (devLinks.length > 0) {
+              devLinks[0].click();
+              return true;
+            }
+            
             return false;
           });
           
-          if (!portalClicked) {
-            throw new Error('Could not find Developer Portal link');
+          if (!clicked) {
+            console.log(`[${this.name}] Could not find Developer Program link, attempting direct navigation...`);
+            // If we can't find the link, try navigating directly
+            await this.page.goto('https://developers.servicenow.com/dev/', { 
+              waitUntil: 'networkidle2',
+              timeout: 30000 
+            });
+          } else {
+            // Wait a bit for potential navigation
+            await Promise.race([
+              this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }),
+              new Promise(resolve => setTimeout(resolve, 3000))
+            ]);
           }
           
-          // Wait for navigation to developers portal
-          await this.page.waitForNavigation({ waitUntil: 'networkidle2' });
+          // Check if we need to handle a new tab/window
+          const pages = await this.browser.pages();
+          if (pages.length > 1) {
+            console.log(`[${this.name}] New tab detected, switching to it...`);
+            // Get the newest page that isn't the current one
+            const newPage = pages.find(p => p !== this.page);
+            if (newPage) {
+              // Wait for the new page to load before closing the old one
+              await newPage.bringToFront();
+              
+              // Wait for navigation or timeout after 5 seconds
+              try {
+                await newPage.waitForNavigation({ 
+                  waitUntil: 'networkidle2', 
+                  timeout: 5000 
+                });
+              } catch (e) {
+                // If navigation doesn't happen, check if we need to navigate manually
+                const newPageUrl = await newPage.url();
+                console.log(`[${this.name}] New tab URL: ${newPageUrl}`);
+                
+                if (newPageUrl === 'about:blank' || !newPageUrl.includes('developers.servicenow.com')) {
+                  console.log(`[${this.name}] New tab didn't navigate, manually navigating to developer portal...`);
+                  await newPage.goto('https://developers.servicenow.com/dev/', { 
+                    waitUntil: 'networkidle2',
+                    timeout: 30000 
+                  });
+                }
+              }
+              
+              // Now close the old page and switch
+              await this.page.close();
+              this.page = newPage;
+            }
+          }
         } catch (error) {
-          console.error(`[${this.name}] Failed to find Developer Portal link`);
-          throw error;
+          console.error(`[${this.name}] Error handling SSO apps page:`, this.sanitizeError(error));
+          // Don't throw here, try to continue
+        }
+      } else if (afterLoginUrl.includes('signon.service-now.com/sso')) {
+        // We're on the SSO page but not the apps selection page
+        // This happens when there's only one app or auto-redirect is enabled
+        console.log(`[${this.name}] On SSO page, attempting direct navigation to developer portal...`);
+        
+        try {
+          await this.page.goto('https://developers.servicenow.com/dev/', { 
+            waitUntil: 'networkidle2',
+            timeout: 30000 
+          });
+        } catch (error) {
+          console.error(`[${this.name}] Direct navigation error:`, this.sanitizeError(error));
         }
       }
       
       // Verify we're now on the developers portal or SSO apps page
       const finalUrl = await this.page.url();
       console.log(`[${this.name}] Current URL after login: ${finalUrl}`);
+      
+      // If we ended up on about:blank, try to navigate directly
+      if (finalUrl === 'about:blank' || finalUrl === '') {
+        console.log(`[${this.name}] Blank page detected, navigating directly to developer portal...`);
+        await this.page.goto('https://developers.servicenow.com/dev/', { 
+          waitUntil: 'networkidle2',
+          timeout: 30000 
+        });
+      }
       
       const loginSuccess = await this.page.evaluate(() => {
         return window.location.hostname === 'developers.servicenow.com' ||
@@ -236,19 +327,16 @@ class DeveloperAccountLogin {
       });
       
       if (!loginSuccess) {
-        // Take a debug screenshot to see where we are
-        await this.takeScreenshot('debug-after-login');
         console.log(`[${this.name}] Not on expected page after login. Current URL: ${finalUrl}`);
+        // Don't throw error here, let navigateToInstances handle the navigation
       }
       
       console.log(`[${this.name}] Login successful`);
-      await this.takeScreenshot('04-login-success');
       
       return true;
       
     } catch (error) {
-      console.error(`[${this.name}] Login error:`, error.message);
-      await this.takeScreenshot('error-login');
+      console.error(`[${this.name}] Login error:`, this.sanitizeError(error));
       throw error;
     }
   }
@@ -277,7 +365,6 @@ class DeveloperAccountLogin {
       }
       
       console.log(`[${this.name}] 2FA page detected`);
-      await this.takeScreenshot('05-2fa-page');
       
       // Check if we need to select authentication method
       const needsMethodSelection = await this.page.evaluate(() => {
@@ -343,7 +430,6 @@ class DeveloperAccountLogin {
         
         // Wait for the code input page to load
         await new Promise(resolve => setTimeout(resolve, 3000));
-        await this.takeScreenshot('05b-2fa-method-selected');
       }
       
       if (!this.totpSecret) {
@@ -352,7 +438,7 @@ class DeveloperAccountLogin {
       
       // Generate TOTP code
       const totpCode = generateTOTP(this.totpSecret);
-      console.log(`[${this.name}] Generated TOTP code: ${totpCode}`);
+      console.log(`[${this.name}] Generating TOTP code for 2FA...`);
       
       // Check if we're on email verification page instead of TOTP
       const isEmailVerification = await this.page.evaluate(() => {
@@ -433,22 +519,16 @@ class DeveloperAccountLogin {
         }
       }
       
-      // Find and fill TOTP input - try multiple selectors
-      console.log(`[${this.name}] Looking for TOTP input field...`);
+      // Find and fill TOTP input
       
-      // First, let's see what inputs are available
+      // Check what inputs are available on 2FA page
       const inputInfo = await this.page.evaluate(() => {
         const inputs = Array.from(document.querySelectorAll('input'));
         return inputs.map(input => ({
           type: input.type,
-          name: input.name,
-          id: input.id,
-          placeholder: input.placeholder,
-          className: input.className,
-          visible: input.offsetParent !== null
+          id: input.id
         }));
       });
-      console.log(`[${this.name}] Found inputs on 2FA page:`, inputInfo);
       
       // Check if we have separate input fields for each digit
       const hasMultipleInputs = inputInfo.some(input => 
@@ -464,7 +544,6 @@ class DeveloperAccountLogin {
           const inputId = `verificationCode-${i}`;
           try {
             await this.page.type(`#${inputId}`, codeDigits[i]);
-            console.log(`[${this.name}] Entered digit ${i + 1}: ${codeDigits[i]}`);
             // Small delay between digits
             await new Promise(resolve => setTimeout(resolve, 100));
           } catch (e) {
@@ -506,7 +585,6 @@ class DeveloperAccountLogin {
         }
       }
       
-      await this.takeScreenshot('06-2fa-filled');
       
       // Wait a moment for the submit button to become enabled
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -521,10 +599,8 @@ class DeveloperAccountLogin {
         });
         
         if (verifyButton) {
-          console.log('Found submit button:', verifyButton.innerText || verifyButton.value);
           // Check if button is disabled
           if (verifyButton.disabled) {
-            console.log('Submit button is disabled');
             return false;
           }
           verifyButton.click();
@@ -546,12 +622,25 @@ class DeveloperAccountLogin {
       
       // Wait for navigation after 2FA submission
       console.log(`[${this.name}] Waiting for navigation after 2FA...`);
-      await this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
+      
+      try {
+        await this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
+        console.log(`[${this.name}] Navigation completed after 2FA`);
+        
+        // Take a screenshot to see where we ended up
+        await this.takeScreenshot('07-after-2fa');
+        
+        const urlAfter2FA = await this.page.url();
+        console.log(`[${this.name}] URL after 2FA: ${urlAfter2FA}`);
+      } catch (navError) {
+        console.error(`[${this.name}] Navigation error after 2FA:`, navError.message);
+        // Try to continue anyway
+      }
       
       console.log(`[${this.name}] 2FA completed`);
       
     } catch (error) {
-      console.error(`[${this.name}] 2FA error:`, error.message);
+      console.error(`[${this.name}] 2FA error:`, this.sanitizeError(error));
       throw error;
     }
   }
@@ -560,16 +649,31 @@ class DeveloperAccountLogin {
     console.log(`[${this.name}] Navigating to instances page...`);
     
     try {
-      // Navigate to instances page
+      // First check if we're already on the developer portal
+      const currentUrl = await this.page.url();
+      console.log(`[${this.name}] Current URL before navigation: ${currentUrl}`);
+      
+      // If we're not on the developer portal, navigate there first
+      if (!currentUrl.includes('developers.servicenow.com')) {
+        console.log(`[${this.name}] Not on developer portal, navigating there first...`);
+        await this.page.goto('https://developers.servicenow.com/dev/', { 
+          waitUntil: 'networkidle2',
+          timeout: 30000
+        });
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+      
+      // Now navigate to instances page
       await this.page.goto('https://developers.servicenow.com/dev/instances', { 
-        waitUntil: 'networkidle2' 
+        waitUntil: 'networkidle2',
+        timeout: 30000
       });
       
       // Wait for page to load
       await new Promise(resolve => setTimeout(resolve, 3000));
       
-      // Take screenshot of instances page
-      await this.takeScreenshot('07-instances-page');
+      // Optional: Take screenshot of instances page for verification
+      // await this.takeScreenshot('07-instances-page');
       
       // Log instance status if visible
       const instanceInfo = await this.page.evaluate(() => {
@@ -597,13 +701,17 @@ class DeveloperAccountLogin {
       return true;
       
     } catch (error) {
-      console.error(`[${this.name}] Navigation error:`, error.message);
-      await this.takeScreenshot('error-navigation');
+      console.error(`[${this.name}] Navigation error:`, this.sanitizeError(error));
       throw error;
     }
   }
 
   async takeScreenshot(suffix) {
+    // Skip screenshots in production for performance
+    if (process.env.SKIP_SCREENSHOTS === 'true') {
+      return;
+    }
+    
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const filename = `developer-${this.name}-${suffix}-${timestamp}.png`;
     
@@ -612,9 +720,8 @@ class DeveloperAccountLogin {
         path: filename, 
         fullPage: true 
       });
-      console.log(`[${this.name}] Screenshot saved: ${filename}`);
     } catch (error) {
-      console.error(`[${this.name}] Screenshot error:`, error.message);
+      console.error(`[${this.name}] Screenshot error:`, this.sanitizeError(error));
     }
   }
 
@@ -662,6 +769,14 @@ async function main() {
   
   console.log(`Configured to process ${accounts.length} developer account(s)`);
   
+  // Track success and failures
+  const results = {
+    total: accounts.length,
+    successful: 0,
+    failed: 0,
+    failures: []
+  };
+  
   // Process each account
   for (const account of accounts) {
     console.log(`\n=== Processing ${account.name} ===`);
@@ -674,9 +789,16 @@ async function main() {
       await login.navigateToInstances();
       
       console.log(`[${account.name}] Keepalive completed successfully`);
+      results.successful++;
       
     } catch (error) {
-      console.error(`[${account.name}] Failed:`, error.message);
+      const sanitizedError = login.sanitizeError(error);
+      console.error(`[${account.name}] Failed:`, sanitizedError);
+      results.failed++;
+      results.failures.push({
+        account: account.name,
+        error: sanitizedError
+      });
       // Continue with next account
     } finally {
       await login.close();
@@ -684,6 +806,31 @@ async function main() {
   }
   
   console.log('\n=== All accounts processed ===');
+  console.log(`Success: ${results.successful}/${results.total}`);
+  console.log(`Failed: ${results.failed}/${results.total}`);
+  
+  // Write summary file for GitHub Actions
+  const summary = {
+    timestamp: new Date().toISOString(),
+    total: results.total,
+    successful: results.successful,
+    failed: results.failed,
+    failures: results.failures
+  };
+  
+  await fs.writeFile('developer-summary.json', JSON.stringify(summary, null, 2));
+  
+  // Exit with error code if all accounts failed
+  if (results.failed === results.total && results.total > 0) {
+    console.error('\nERROR: All accounts failed!');
+    process.exit(1);
+  }
+  
+  // Exit with warning code if more than 50% failed
+  if (results.failed > results.successful && results.total > 0) {
+    console.error(`\nWARNING: More than half of accounts failed (${results.failed}/${results.total})`);
+    process.exit(2);
+  }
 }
 
 // Run the main function
