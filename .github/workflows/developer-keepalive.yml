@@ -5,9 +5,6 @@ on:
     # Run every 6 hours
     - cron: '0 */6 * * *'
   workflow_dispatch: # Allow manual trigger
-  push:
-    branches:
-      - test-keepalive-refactor  # Test branch trigger
 
 jobs:
   keepalive:
@@ -32,7 +29,7 @@ jobs:
     - name: Login to developer accounts
       env:
         DEVELOPER_ACCOUNTS_JSON: ${{ secrets.DEVELOPER_ACCOUNTS_JSON }}
-        SKIP_SCREENSHOTS: 'true'
+        SKIP_SCREENSHOTS: 'false'
       run: |
         cd developer-output
         node ../src/developer-login.js
