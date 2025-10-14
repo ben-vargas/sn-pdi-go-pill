@@ -123,8 +123,27 @@ class DeveloperAccountLogin {
             // leave currentHost as null
           }
           if (targetHost && currentHost === targetHost) {
-            console.log(`[${this.name}] Navigation to ${url} reported ${reason} but current host is ${currentHost}. Continuing.`);
-            return;
+            let isValidPage = true;
+            try {
+              isValidPage = await this.page.evaluate(() => {
+                const bodyText = document.body?.innerText?.toLowerCase() || '';
+                const isRedirecting = bodyText.includes('redirecting') || bodyText.includes('please wait');
+                return document.readyState === 'complete' && !isRedirecting;
+              });
+            } catch (evalError) {
+              const evalMessage = evalError?.message || '';
+              if (evalMessage.includes('Execution context was destroyed') || evalMessage.includes('Cannot find context')) {
+                console.log(`[${this.name}] Navigation context changed while validating ${url}, assuming success.`);
+                return;
+              }
+              console.log(`[${this.name}] Unable to verify page state after navigation error: ${evalMessage}`);
+              isValidPage = false;
+            }
+
+            if (isValidPage) {
+              console.log(`[${this.name}] Navigation to ${url} reported ${reason} but arrived at valid ${currentHost} page. Continuing.`);
+              return;
+            }
           }
           if (attempt === retries) {
             throw error;
