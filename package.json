@@ -1,6 +1,6 @@
 {
   "name": "sn-pdi-monitor",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "ServiceNow PDI monitoring and developer account keepalive using GitHub Actions and Puppeteer",
   "main": "src/scrape-stats.js",
   "scripts": {

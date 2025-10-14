@@ -178,14 +178,19 @@ class DeveloperAccountLogin {
       // Check if we're on the SSO apps page
       await new Promise(resolve => setTimeout(resolve, 2000));
       const afterLoginUrl = await this.page.url();
-      
+
       // Check if we're on the SSO apps selection page
-      const isOnSSOAppsPage = await this.page.evaluate(() => {
-        return window.location.hostname === 'signon.service-now.com' && 
-               document.body && 
-               document.body.innerText && 
-               document.body.innerText.includes('My Apps');
-      });
+      let isOnSSOAppsPage = false;
+      try {
+        isOnSSOAppsPage = await this.page.evaluate(() => {
+          return window.location.hostname === 'signon.service-now.com' &&
+                 document.body &&
+                 document.body.innerText &&
+                 document.body.innerText.includes('My Apps');
+        });
+      } catch (evalError) {
+        console.log(`[${this.name}] Could not evaluate SSO apps page, continuing with navigation...`);
+      }
       
       if (isOnSSOAppsPage) {
         console.log(`[${this.name}] On SSO apps page, looking for Developer Program link...`);
@@ -315,15 +320,20 @@ class DeveloperAccountLogin {
         });
       }
       
-      const loginSuccess = await this.page.evaluate(() => {
-        return window.location.hostname === 'developer.servicenow.com' ||
-               window.location.hostname === 'developers.servicenow.com' ||
-               (window.location.hostname === 'signon.service-now.com' && 
-                document.body && 
-                document.body.innerText && 
-                document.body.innerText.includes('My Apps'));
-      });
-      
+      let loginSuccess = false;
+      try {
+        loginSuccess = await this.page.evaluate(() => {
+          return window.location.hostname === 'developer.servicenow.com' ||
+                 window.location.hostname === 'developers.servicenow.com' ||
+                 (window.location.hostname === 'signon.service-now.com' &&
+                  document.body &&
+                  document.body.innerText &&
+                  document.body.innerText.includes('My Apps'));
+        });
+      } catch (evalError) {
+        console.log(`[${this.name}] Could not verify login page (likely due to redirect), will verify in navigateToInstances...`);
+      }
+
       if (!loginSuccess) {
         console.log(`[${this.name}] Not on expected page after login. Current URL: ${finalUrl}`);
         // Don't throw error here, let navigateToInstances handle the navigation
@@ -620,9 +630,56 @@ class DeveloperAccountLogin {
       
       // Wait for navigation after 2FA submission
       console.log(`[${this.name}] Waiting for navigation after 2FA...`);
-      await this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
-      
-      console.log(`[${this.name}] 2FA completed`);
+      try {
+        await this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
+      } catch (navError) {
+        console.log(`[${this.name}] Navigation wait timeout, verifying 2FA success...`);
+      }
+
+      // Verify we actually left the 2FA page (critical check!)
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      const post2FAUrl = await this.page.url();
+      const checkStillOn2FA = async () => {
+        return this.page.evaluate(() => {
+          if (!document.body || !document.body.innerText) return false;
+          const pageText = document.body.innerText.toLowerCase();
+          return pageText.includes('verification code') ||
+                 pageText.includes('authenticator') ||
+                 pageText.includes('enter code') ||
+                 pageText.includes('incorrect code') ||
+                 pageText.includes('invalid code');
+        });
+      };
+
+      let still2FA = false;
+      try {
+        still2FA = await checkStillOn2FA();
+      } catch (evalError) {
+        const message = evalError?.message || '';
+        if (message.includes('Execution context was destroyed')) {
+          console.log(`[${this.name}] 2FA context changed during verification, retrying check...`);
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          try {
+            still2FA = await checkStillOn2FA();
+          } catch (retryError) {
+            const retryMessage = retryError?.message || '';
+            if (retryMessage.includes('Execution context was destroyed')) {
+              console.log(`[${this.name}] 2FA context destroyed again, assuming navigation completed successfully.`);
+              still2FA = false;
+            } else {
+              throw retryError;
+            }
+          }
+        } else {
+          throw evalError;
+        }
+      }
+
+      if (still2FA) {
+        throw new Error('2FA verification failed - still on 2FA page. Code may be incorrect or expired.');
+      }
+
+      console.log(`[${this.name}] 2FA completed successfully, navigated to: ${post2FAUrl}`);
       
     } catch (error) {
       console.error(`[${this.name}] 2FA error:`, this.sanitizeError(error));
@@ -632,16 +689,36 @@ class DeveloperAccountLogin {
 
   async navigateToInstances() {
     console.log(`[${this.name}] Navigating to instances page...`);
-    
+
     try {
       // First check if we're already on the developer portal
       const currentUrl = await this.page.url();
       console.log(`[${this.name}] Current URL before navigation: ${currentUrl}`);
-      
+
+      // If we're on a redirect page, wait for it to complete
+      if (currentUrl.includes('login_redirect.do')) {
+        console.log(`[${this.name}] On redirect page, waiting for redirect to complete...`);
+        try {
+          await this.page.waitForNavigation({
+            waitUntil: 'networkidle2',
+            timeout: 15000
+          });
+          const newUrl = await this.page.url();
+          console.log(`[${this.name}] Redirect completed, now at: ${newUrl}`);
+        } catch (redirectError) {
+          console.log(`[${this.name}] Redirect wait timeout, will navigate manually...`);
+        }
+        // Add a small delay after redirect
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+
+      // Check URL again after potential redirect
+      const postRedirectUrl = await this.page.url();
+
       // If we're not on the developer portal, navigate there first
-      if (!currentUrl.includes('developer.servicenow.com') && !currentUrl.includes('developers.servicenow.com')) {
+      if (!postRedirectUrl.includes('developer.servicenow.com') && !postRedirectUrl.includes('developers.servicenow.com')) {
         console.log(`[${this.name}] Not on developer portal, navigating there first...`);
-        await this.page.goto('https://developer.servicenow.com/dev/', { 
+        await this.page.goto('https://developer.servicenow.com/dev/', {
           waitUntil: 'networkidle2',
           timeout: 30000
         });
@@ -763,9 +840,18 @@ async function main() {
   };
   
   // Process each account
-  for (const account of accounts) {
+  for (let i = 0; i < accounts.length; i++) {
+    const account = accounts[i];
+
+    // Add delay between accounts to avoid rate limiting
+    if (i > 0) {
+      const delaySeconds = 10;
+      console.log(`\nWaiting ${delaySeconds} seconds before processing next account...`);
+      await new Promise(resolve => setTimeout(resolve, delaySeconds * 1000));
+    }
+
     console.log(`\n=== Processing ${account.name} ===`);
-    
+
     const login = new DeveloperAccountLogin(account);
     
     try {
