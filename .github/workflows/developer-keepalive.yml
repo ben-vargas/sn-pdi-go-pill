@@ -29,7 +29,7 @@ jobs:
     - name: Login to developer accounts
       env:
         DEVELOPER_ACCOUNTS_JSON: ${{ secrets.DEVELOPER_ACCOUNTS_JSON }}
-        SKIP_SCREENSHOTS: 'true'
+        SKIP_SCREENSHOTS: 'false'
       run: |
         cd developer-output
         node ../src/developer-login.js

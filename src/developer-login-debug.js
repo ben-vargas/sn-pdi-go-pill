@@ -10,6 +10,8 @@ class DeveloperAccountLogin {
     this.totpSecret = accountConfig.totpSecret;
     this.browser = null;
     this.page = null;
+    this.developerHosts = ['developer.servicenow.com', 'developers.servicenow.com'];
+    this.ssoHost = 'signon.service-now.com';
   }
   
   // Sanitize error messages to remove URLs and sensitive info
@@ -47,13 +49,123 @@ class DeveloperAccountLogin {
     await this.page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
   }
 
+  async wait(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  async findFirstVisibleSelector(selectors, { timeoutPerSelector = 4000 } = {}) {
+    for (const selector of selectors) {
+      try {
+        await this.page.waitForSelector(selector, { visible: true, timeout: timeoutPerSelector });
+        return selector;
+      } catch (error) {
+        // Try next selector
+      }
+    }
+    return null;
+  }
+
+  async clickButtonByText(possibleLabels) {
+    const labels = possibleLabels.map(label => label.toLowerCase());
+    return this.page.evaluate((searchLabels) => {
+      const elements = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], a[role="button"], div[role="button"]'));
+      const candidate = elements.find(el => {
+        const text = (el.innerText || el.value || '').toLowerCase();
+        return searchLabels.some(label => text.includes(label));
+      });
+      if (candidate) {
+        candidate.click();
+        return true;
+      }
+      return false;
+    }, labels);
+  }
+
+  isDeveloperPortalUrl(url) {
+    try {
+      const host = new URL(url).hostname;
+      return this.developerHosts.includes(host);
+    } catch (error) {
+      return false;
+    }
+  }
+
+  isSSOUrl(url) {
+    try {
+      return new URL(url).hostname === this.ssoHost;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  async navigateWithRetries(url, { waitUntil = 'domcontentloaded', timeout = 45000, retries = 2 } = {}) {
+    const targetHost = (() => {
+      try {
+        return new URL(url).hostname;
+      } catch (error) {
+        return null;
+      }
+    })();
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        await this.page.goto(url, { waitUntil, timeout });
+        return;
+      } catch (error) {
+        const message = error?.message || '';
+        if (message.includes('net::ERR_ABORTED') || message.toLowerCase().includes('timeout')) {
+          const currentUrl = await this.page.url();
+          const reason = message.includes('net::ERR_ABORTED') ? 'ERR_ABORTED' : 'timeout';
+          let currentHost = null;
+          try {
+            currentHost = new URL(currentUrl).hostname;
+          } catch (urlError) {
+            // leave currentHost as null
+          }
+          if (targetHost && currentHost === targetHost) {
+            let isValidPage = true;
+            try {
+              isValidPage = await this.page.evaluate(() => {
+                const bodyText = document.body?.innerText?.toLowerCase() || '';
+                const isRedirecting = bodyText.includes('redirecting') || bodyText.includes('please wait');
+                return document.readyState === 'complete' && !isRedirecting;
+              });
+            } catch (evalError) {
+              const evalMessage = evalError?.message || '';
+              if (evalMessage.includes('Execution context was destroyed') || evalMessage.includes('Cannot find context')) {
+                console.log(`[${this.name}] Navigation context changed while validating ${url}, assuming success.`);
+                return;
+              }
+              console.log(`[${this.name}] Unable to verify page state after navigation error: ${evalMessage}`);
+              isValidPage = false;
+            }
+
+            if (isValidPage) {
+              console.log(`[${this.name}] Navigation to ${url} reported ${reason} but arrived at valid ${currentHost} page. Continuing.`);
+              return;
+            }
+          }
+          if (attempt === retries) {
+            throw error;
+          }
+          console.log(`[${this.name}] Navigation to ${url} ${message.includes('net::ERR_ABORTED') ? 'aborted' : 'timed out'}, retrying (${attempt + 1}/${retries})...`);
+          await this.wait(2000);
+          continue;
+        }
+        throw error;
+      }
+    }
+  }
+
   async login() {
     console.log(`[${this.name}] Navigating to developer login page...`);
     
     try {
       // Navigate to developer login (ServiceNow SSO)
-      await this.page.goto('https://signon.service-now.com/x_snc_sso_auth.do?pageId=login', { 
-        waitUntil: 'networkidle2' 
+      await this.navigateWithRetries('https://signon.service-now.com/x_snc_sso_auth.do?pageId=login', {
+        waitUntil: 'domcontentloaded',
+        timeout: 60000,
+        retries: 1
       });
       
       // Wait for any loading overlays to disappear
@@ -98,79 +210,76 @@ class DeveloperAccountLogin {
         'input[type="text"]'
       ];
       
-      let emailFieldFound = false;
-      for (const selector of emailSelectors) {
-        try {
-          await this.page.waitForSelector(selector, { visible: true, timeout: 5000 });
-          console.log(`[${this.name}] Found email field with selector: ${selector}`);
-          await this.page.type(selector, this.email);
-          emailFieldFound = true;
-          break;
-        } catch (e) {
-          // Try next selector
-        }
-      }
+      const emailSelector = await this.findFirstVisibleSelector(emailSelectors, { timeoutPerSelector: 5000 });
       
-      if (!emailFieldFound) {
+      if (!emailSelector) {
         throw new Error('Could not find email input field');
       }
+      
+      console.log(`[${this.name}] Found email field with selector: ${emailSelector}`);
+      await this.page.click(emailSelector, { clickCount: 3 });
+      await this.page.type(emailSelector, this.email);
       
       // Click Next button
       console.log(`[${this.name}] Clicking Next...`);
       
       // Find the Next button using multiple strategies
-      const nextButtonClicked = await this.page.evaluate(() => {
-        // Try different ways to find the Next button
-        const buttons = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"]'));
-        const nextButton = buttons.find(btn => 
-          btn.innerText?.toLowerCase().includes('next') || 
-          btn.value?.toLowerCase().includes('next')
-        );
-        
-        if (nextButton) {
-          nextButton.click();
-          return true;
-        }
-        return false;
-      });
+      const nextButtonClicked = await this.clickButtonByText(['next', 'continue']);
       
       if (!nextButtonClicked) {
-        throw new Error('Could not find Next button');
+        console.log(`[${this.name}] Next button not found, pressing Enter as fallback...`);
+        await this.page.keyboard.press('Enter');
       }
       
-      // Wait for navigation
-      await this.page.waitForNavigation({ waitUntil: 'networkidle2' });
+      try {
+        await this.page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 });
+      } catch (navigationError) {
+        console.log(`[${this.name}] Next navigation timeout (expected if password loads inline)`);
+      }
       
       // Step 2: Fill password
       console.log(`[${this.name}] Filling password...`);
-      await this.page.waitForSelector('input[type="password"], input[name="password"], input[id="password"]', { visible: true });
-      await this.page.type('input[type="password"], input[name="password"], input[id="password"]', this.password);
+      const passwordSelectors = [
+        'input[type="password"]',
+        'input[name="password"]',
+        'input[id="password"]',
+        'input[name="user_password"]',
+        'input#current-password',
+        'input[name="LoginModel.Password"]'
+      ];
+
+      const passwordSelector = await this.findFirstVisibleSelector(passwordSelectors, { timeoutPerSelector: 5000 });
+
+      if (!passwordSelector) {
+        const currentUrl = await this.page.url();
+        if (this.isSSOUrl(currentUrl)) {
+          console.log(`[${this.name}] Password field not found but already on SSO host (${currentUrl}), continuing...`);
+        } else {
+          throw new Error('Could not find password input field');
+        }
+      } else {
+        await this.page.click(passwordSelector, { clickCount: 3 });
+        await this.page.type(passwordSelector, this.password);
+      }
       
       
       // Submit login form
       console.log(`[${this.name}] Clicking Sign In...`);
       
       // Find and click the Sign In button
-      const signInClicked = await this.page.evaluate(() => {
-        const buttons = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"]'));
-        const signInButton = buttons.find(btn => {
-          const text = (btn.innerText || btn.value || '').toLowerCase();
-          return text.includes('sign in') || text.includes('log in') || text.includes('submit');
-        });
-        
-        if (signInButton) {
-          signInButton.click();
-          return true;
-        }
-        return false;
-      });
+      const signInClicked = await this.clickButtonByText(['sign in', 'log in', 'submit', 'continue']);
       
       if (!signInClicked) {
-        throw new Error('Could not find Sign In button');
+        console.log(`[${this.name}] Sign In button not found, pressing Enter as fallback...`);
+        await this.page.keyboard.press('Enter');
       }
       
       // Wait for navigation
-      await this.page.waitForNavigation({ waitUntil: 'networkidle2' });
+      try {
+        await this.page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 });
+      } catch (navigationError) {
+        console.log(`[${this.name}] Login navigation timeout (expected if redirect handled via XHR)`);
+      }
       
       // Check for 2FA
       await this.handle2FA();
@@ -240,9 +349,9 @@ class DeveloperAccountLogin {
           if (!clicked) {
             console.log(`[${this.name}] Could not find Developer Program link, attempting direct navigation...`);
             // If we can't find the link, try navigating directly
-            await this.page.goto('https://developer.servicenow.com/dev/', { 
-              waitUntil: 'networkidle2',
-              timeout: 30000 
+            await this.navigateWithRetries('https://developer.servicenow.com/dev/', {
+              waitUntil: 'domcontentloaded',
+              timeout: 45000
             });
           } else {
             // Wait a bit for potential navigation
@@ -297,9 +406,9 @@ class DeveloperAccountLogin {
         console.log(`[${this.name}] On SSO page, attempting direct navigation to developer portal...`);
 
         try {
-          await this.page.goto('https://developer.servicenow.com/dev/', { 
-            waitUntil: 'networkidle2',
-            timeout: 30000 
+          await this.navigateWithRetries('https://developer.servicenow.com/dev/', {
+            waitUntil: 'domcontentloaded',
+            timeout: 45000
           });
         } catch (error) {
           console.error(`[${this.name}] Direct navigation error:`, this.sanitizeError(error));
@@ -313,9 +422,9 @@ class DeveloperAccountLogin {
       // If we ended up on about:blank, try to navigate directly
       if (finalUrl === 'about:blank' || finalUrl === '') {
         console.log(`[${this.name}] Blank page detected, navigating directly to developer portal...`);
-        await this.page.goto('https://developer.servicenow.com/dev/', { 
-          waitUntil: 'networkidle2',
-          timeout: 30000 
+        await this.navigateWithRetries('https://developer.servicenow.com/dev/', {
+          waitUntil: 'domcontentloaded',
+          timeout: 45000
         });
       }
       
@@ -720,17 +829,17 @@ class DeveloperAccountLogin {
       // If we're not on the developer portal, navigate there first
       if (!postRedirectUrl.includes('developer.servicenow.com') && !postRedirectUrl.includes('developers.servicenow.com')) {
         console.log(`[${this.name}] Not on developer portal, navigating there first...`);
-        await this.page.goto('https://developer.servicenow.com/dev/', {
-          waitUntil: 'networkidle2',
-          timeout: 30000
+        await this.navigateWithRetries('https://developer.servicenow.com/dev/', {
+          waitUntil: 'domcontentloaded',
+          timeout: 45000
         });
         await new Promise(resolve => setTimeout(resolve, 2000));
       }
       
       // Now navigate to instances page
-      await this.page.goto('https://developer.servicenow.com/dev/instances', { 
-        waitUntil: 'networkidle2',
-        timeout: 30000
+      await this.navigateWithRetries('https://developer.servicenow.com/dev/instances', {
+        waitUntil: 'domcontentloaded',
+        timeout: 45000
       });
       
       // Wait for page to load
