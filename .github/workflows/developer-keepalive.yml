@@ -5,6 +5,9 @@ on:
     # Run every 6 hours
     - cron: '0 */6 * * *'
   workflow_dispatch: # Allow manual trigger
+  push:
+    branches:
+      - test-keepalive-refactor  # Test branch trigger
 
 jobs:
   keepalive:
