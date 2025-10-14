@@ -47,6 +47,8 @@ screenshots/
 stats-*.html
 screenshot-*.png
 developer-*.png
+developer-summary.json
+stats-summary.json
 
 # Temporary files
 tmp/
