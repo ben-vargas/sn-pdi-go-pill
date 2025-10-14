@@ -116,8 +116,14 @@ class DeveloperAccountLogin {
         if (message.includes('net::ERR_ABORTED') || message.toLowerCase().includes('timeout')) {
           const currentUrl = await this.page.url();
           const reason = message.includes('net::ERR_ABORTED') ? 'ERR_ABORTED' : 'timeout';
-          if (targetHost && currentUrl.includes(targetHost)) {
-            console.log(`[${this.name}] Navigation to ${url} reported ${reason} but current URL is ${currentUrl}. Continuing.`);
+          let currentHost = null;
+          try {
+            currentHost = new URL(currentUrl).hostname;
+          } catch (urlError) {
+            // leave currentHost as null
+          }
+          if (targetHost && currentHost === targetHost) {
+            console.log(`[${this.name}] Navigation to ${url} reported ${reason} but current host is ${currentHost}. Continuing.`);
             return;
           }
           if (attempt === retries) {
