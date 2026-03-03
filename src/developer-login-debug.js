@@ -11,7 +11,7 @@ class DeveloperAccountLogin {
     this.browser = null;
     this.page = null;
     this.developerHosts = ['developer.servicenow.com', 'developers.servicenow.com'];
-    this.ssoHost = 'signon.service-now.com';
+    this.ssoHosts = ['signon.servicenow.com', 'signon.service-now.com'];
   }
   
   // Sanitize error messages to remove URLs and sensitive info
@@ -21,8 +21,10 @@ class DeveloperAccountLogin {
     message = message.replace(/https?:\/\/[^\s]+/gi, '[URL]');
     // Remove email addresses
     message = message.replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '[EMAIL]');
-    // Remove any service-now.com domains
+    // Remove any service-now.com / servicenow.com domains
     message = message.replace(/[a-zA-Z0-9.-]*\.service-now\.com/gi, '[SERVICENOW]');
+    message = message.replace(/[a-zA-Z0-9.-]*\.servicenow\.com/gi, '[SERVICENOW]');
+    message = message.replace(/signon\.servicenow\.com/gi, '[SSO]');
     message = message.replace(/signon\.service-now\.com/gi, '[SSO]');
     message = message.replace(/developer\.servicenow\.com/gi, '[DEVELOPER_PORTAL]');
     return message;
@@ -92,9 +94,32 @@ class DeveloperAccountLogin {
 
   isSSOUrl(url) {
     try {
-      return new URL(url).hostname === this.ssoHost;
+      return this.ssoHosts.includes(new URL(url).hostname);
     } catch (error) {
       return false;
+    }
+  }
+
+  async dismissCookieBanner() {
+    try {
+      const dismissed = await this.page.evaluate(() => {
+        const buttons = Array.from(document.querySelectorAll('button'));
+        const acceptBtn = buttons.find(btn => {
+          const text = (btn.innerText || '').toLowerCase();
+          return text.includes('accept') && text.includes('proceed');
+        });
+        if (acceptBtn) {
+          acceptBtn.click();
+          return true;
+        }
+        return false;
+      });
+      if (dismissed) {
+        console.log(`[${this.name}] Dismissed cookie consent banner`);
+        await this.wait(1000);
+      }
+    } catch (e) {
+      // Cookie banner may not be present, ignore
     }
   }
 
@@ -162,7 +187,7 @@ class DeveloperAccountLogin {
     
     try {
       // Navigate to developer login (ServiceNow SSO)
-      await this.navigateWithRetries('https://signon.service-now.com/x_snc_sso_auth.do?pageId=login', {
+      await this.navigateWithRetries('https://signon.servicenow.com/x_snc_sso_auth.do?pageId=login', {
         waitUntil: 'domcontentloaded',
         timeout: 60000,
         retries: 1
@@ -292,121 +317,20 @@ class DeveloperAccountLogin {
       const afterLoginUrl = await this.page.url();
       console.log(`[${this.name}] URL after 2FA handling: ${afterLoginUrl}`);
       
-      // Check if we're on the SSO apps selection page
-      const isOnSSOAppsPage = await this.page.evaluate(() => {
-        return window.location.hostname === 'signon.service-now.com' && 
-               document.body && 
-               document.body.innerText && 
-               document.body.innerText.includes('My Apps');
-      });
-      
-      if (isOnSSOAppsPage) {
-        console.log(`[${this.name}] On SSO apps page, looking for Developer Program link...`);
-        
-        // Take a screenshot to debug what's on the page
+      // After 2FA, we may be on SSO apps page or SSO redirect.
+      // Instead of trying to find/click the Developer Program link (which opens
+      // unreliable new tabs), navigate directly — the SSO session cookie is set.
+      if (this.isSSOUrl(afterLoginUrl)) {
+        console.log(`[${this.name}] On SSO page after login, navigating directly to developer portal...`);
+
         try {
           await this.takeScreenshot('sso-apps-page');
         } catch (e) {
           // Ignore screenshot errors
         }
-        
-        // Click on Developer Program (previously Developer Portal)
-        try {
-          // Try multiple strategies to find and click the Developer Program link
-          const clicked = await this.page.evaluate(() => {
-            // Strategy 1: Look for exact text match
-            const elements = Array.from(document.querySelectorAll('a, div, button, span, h1, h2, h3, h4, p'));
-            const portalElement = elements.find(el => {
-              const text = el.innerText || el.textContent || '';
-              return text.includes('Developer Program') || text.includes('Developer Portal');
-            });
-            
-            if (portalElement) {
-              // Try to find a clickable parent if the element itself isn't clickable
-              let clickTarget = portalElement;
-              let parent = portalElement.parentElement;
-              while (parent && parent !== document.body) {
-                if (parent.tagName === 'A' || parent.tagName === 'BUTTON' || parent.onclick) {
-                  clickTarget = parent;
-                  break;
-                }
-                parent = parent.parentElement;
-              }
-              clickTarget.click();
-              return true;
-            }
-            
-            // Strategy 2: Look for any link containing developer.servicenow.com
-            const devLinks = Array.from(document.querySelectorAll('a[href*="developer.servicenow.com"], a[href*="developers.servicenow.com"]'));
-            if (devLinks.length > 0) {
-              devLinks[0].click();
-              return true;
-            }
-            
-            return false;
-          });
-          
-          if (!clicked) {
-            console.log(`[${this.name}] Could not find Developer Program link, attempting direct navigation...`);
-            // If we can't find the link, try navigating directly
-            await this.navigateWithRetries('https://developer.servicenow.com/dev/', {
-              waitUntil: 'domcontentloaded',
-              timeout: 45000
-            });
-          } else {
-            // Wait a bit for potential navigation
-            await Promise.race([
-              this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }),
-              new Promise(resolve => setTimeout(resolve, 3000))
-            ]);
-          }
-          
-          // Check if we need to handle a new tab/window
-          const pages = await this.browser.pages();
-          if (pages.length > 1) {
-            console.log(`[${this.name}] New tab detected, switching to it...`);
-            // Get the newest page that isn't the current one
-            const newPage = pages.find(p => p !== this.page);
-            if (newPage) {
-              // Wait for the new page to load before closing the old one
-              await newPage.bringToFront();
-              
-              // Wait for navigation or timeout after 5 seconds
-              try {
-                await newPage.waitForNavigation({ 
-                  waitUntil: 'networkidle2', 
-                  timeout: 5000 
-                });
-              } catch (e) {
-                // If navigation doesn't happen, check if we need to navigate manually
-                const newPageUrl = await newPage.url();
-                console.log(`[${this.name}] New tab URL: ${newPageUrl}`);
-                
-                if (newPageUrl === 'about:blank' || (!newPageUrl.includes('developer.servicenow.com') && !newPageUrl.includes('developers.servicenow.com'))) {
-                  console.log(`[${this.name}] New tab didn't navigate, manually navigating to developer portal...`);
-                  await newPage.goto('https://developer.servicenow.com/dev/', { 
-                    waitUntil: 'networkidle2',
-                    timeout: 30000 
-                  });
-                }
-              }
-              
-              // Now close the old page and switch
-              await this.page.close();
-              this.page = newPage;
-            }
-          }
-        } catch (error) {
-          console.error(`[${this.name}] Error handling SSO apps page:`, this.sanitizeError(error));
-          // Don't throw here, try to continue
-        }
-      } else if (afterLoginUrl.includes('signon.service-now.com/sso')) {
-        // We're on the SSO page but not the apps selection page
-        // This happens when there's only one app or auto-redirect is enabled
-        console.log(`[${this.name}] On SSO page, attempting direct navigation to developer portal...`);
 
         try {
-          await this.navigateWithRetries('https://developer.servicenow.com/dev/', {
+          await this.navigateWithRetries('https://developer.servicenow.com/dev.do', {
             waitUntil: 'domcontentloaded',
             timeout: 45000
           });
@@ -422,20 +346,20 @@ class DeveloperAccountLogin {
       // If we ended up on about:blank, try to navigate directly
       if (finalUrl === 'about:blank' || finalUrl === '') {
         console.log(`[${this.name}] Blank page detected, navigating directly to developer portal...`);
-        await this.navigateWithRetries('https://developer.servicenow.com/dev/', {
+        await this.navigateWithRetries('https://developer.servicenow.com/dev.do', {
           waitUntil: 'domcontentloaded',
           timeout: 45000
         });
       }
       
-      const loginSuccess = await this.page.evaluate(() => {
+      const loginSuccess = await this.page.evaluate((ssoHosts) => {
         return window.location.hostname === 'developer.servicenow.com' ||
                window.location.hostname === 'developers.servicenow.com' ||
-               (window.location.hostname === 'signon.service-now.com' &&
+               (ssoHosts.includes(window.location.hostname) &&
                 document.body &&
                 document.body.innerText &&
                 document.body.innerText.includes('My Apps'));
-      });
+      }, this.ssoHosts);
       
       if (!loginSuccess) {
         console.log(`[${this.name}] Not on expected page after login. Current URL: ${finalUrl}`);
@@ -829,46 +753,39 @@ class DeveloperAccountLogin {
       // If we're not on the developer portal, navigate there first
       if (!postRedirectUrl.includes('developer.servicenow.com') && !postRedirectUrl.includes('developers.servicenow.com')) {
         console.log(`[${this.name}] Not on developer portal, navigating there first...`);
-        await this.navigateWithRetries('https://developer.servicenow.com/dev/', {
+        await this.navigateWithRetries('https://developer.servicenow.com/dev.do', {
           waitUntil: 'domcontentloaded',
           timeout: 45000
         });
         await new Promise(resolve => setTimeout(resolve, 2000));
       }
-      
-      // Now navigate to instances page
-      await this.navigateWithRetries('https://developer.servicenow.com/dev/instances', {
+
+      // Dismiss cookie consent banner if present
+      await this.dismissCookieBanner();
+
+      // Navigate to manage instance page (the actual keepalive target)
+      console.log(`[${this.name}] Navigating to manage instance page...`);
+      await this.navigateWithRetries('https://developer.servicenow.com/dev.do#!/manage-instance', {
         waitUntil: 'domcontentloaded',
         timeout: 45000
       });
-      
-      // Wait for page to load
-      await new Promise(resolve => setTimeout(resolve, 3000));
-      
-      // Optional: Take screenshot of instances page for verification
-      // await this.takeScreenshot('07-instances-page');
-      
+
+      // Wait for SPA route to load
+      await new Promise(resolve => setTimeout(resolve, 5000));
+
+      // Take screenshot of instances page
+      await this.takeScreenshot('instances-page');
+
       // Log instance status if visible
-      const instanceInfo = await this.page.evaluate(() => {
-        const instances = [];
-        const instanceElements = document.querySelectorAll('[data-instance-id], .instance-card, .instance-item');
-        
-        instanceElements.forEach(el => {
-          const name = el.querySelector('.instance-name, h3, h4')?.innerText;
-          const status = el.querySelector('.instance-status, .status')?.innerText;
-          if (name) {
-            instances.push({ name, status: status || 'unknown' });
-          }
-        });
-        
-        return instances;
-      });
-      
-      if (instanceInfo.length > 0) {
-        console.log(`[${this.name}] Found ${instanceInfo.length} instance(s):`);
-        instanceInfo.forEach(inst => {
-          console.log(`  - ${inst.name}: ${inst.status}`);
-        });
+      const pageText = await this.page.evaluate(() => document.body?.innerText || '');
+      const statusMatch = pageText.match(/Status\s*(Online|Offline|Hibernating|Awake)/i);
+      if (statusMatch) {
+        console.log(`[${this.name}] Instance status: ${statusMatch[1]}`);
+      }
+
+      const hasInstance = pageText.match(/dev\d+\.service-now\.com/);
+      if (hasInstance) {
+        console.log(`[${this.name}] Instance URL found on manage page`);
       }
       
       return true;
